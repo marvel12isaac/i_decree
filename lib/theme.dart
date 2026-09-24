@@ -99,7 +99,7 @@ class AppColors extends ThemeExtension<AppColors> {
     blue: Color(0xFF3F8FD8),
     ring: Color(0xFFB4BEC6),
     pill: Color(0xFF2F7FD8),
-    flame: Palette.gold,
+    flame: Color(0xFFF28C28),
   );
 
   static const dark = AppColors(
@@ -115,7 +115,7 @@ class AppColors extends ThemeExtension<AppColors> {
     blue: Color(0xFF6CB4F5),
     ring: Color(0xFF4A5866),
     pill: Color(0xFF1F8F81),
-    flame: Color(0xFFE3AB3A),
+    flame: Color(0xFFFFA033),
   );
 
   static AppColors of(BuildContext context) =>

@@ -3,11 +3,15 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../theme.dart';
+import '../widgets/read_bolts.dart';
 import 'quote_view_screen.dart';
 
 /// One Circle's quote list: same look as the personal list, but read-only —
 /// no add button, no swipe-to-delete, since the content comes from the
 /// hosted file and members can't edit it.
+///
+/// Each decree shows today's read progress as lightning bolts, right-aligned
+/// under the text.
 class CircleQuoteListScreen extends StatelessWidget {
   const CircleQuoteListScreen({super.key, required this.circleId});
 
@@ -17,8 +21,6 @@ class CircleQuoteListScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final c = AppColors.of(context);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final doneColor = isDark ? c.teal : Palette.sage;
 
     final circle = state.circleById(circleId);
     final quotes = circle?.quotes ?? const <Quote>[];
@@ -42,10 +44,6 @@ class CircleQuoteListScreen extends StatelessWidget {
               separatorBuilder: (_, __) => const Divider(),
               itemBuilder: (context, i) {
                 final quote = quotes[i];
-                final streak = state.quoteStreak(quote.id);
-                final today = state.readsTodayFor(quote.id);
-                final complete = today >= quote.targetPerDay;
-
                 return InkWell(
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
@@ -65,29 +63,12 @@ class CircleQuoteListScreen extends StatelessWidget {
                           style: quoteStyle(size: 18),
                         ),
                         const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.local_fire_department_outlined,
-                              size: 18,
-                              color: streak > 0 ? c.flame : c.muted,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              streak > 0 ? '$streak-day streak' : 'No streak yet',
-                              style: TextStyle(color: c.muted, fontSize: 14),
-                            ),
-                            const Spacer(),
-                            Text(
-                              '$today of ${quote.targetPerDay} today',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight:
-                                    complete ? FontWeight.w600 : FontWeight.w400,
-                                color: complete ? doneColor : c.muted,
-                              ),
-                            ),
-                          ],
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: ReadBolts(
+                            done: state.readsTodayFor(quote.id),
+                            target: quote.targetPerDay,
+                          ),
                         ),
                       ],
                     ),

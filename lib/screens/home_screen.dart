@@ -59,7 +59,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ----------------------------------------------------------------- header
-    Widget _buildHeader(AppState state, bool isDark, AppColors c) {
+
+  Widget _buildHeader(AppState state, bool isDark, AppColors c) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       child: Stack(
@@ -89,6 +90,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
   // ----------------------------------------------------------------- search
 
   Widget _buildSearchField(AppColors c) {
@@ -145,7 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final hits = <_Hit>[];
     for (final quote in state.quotes) {
       if (quote.text.toLowerCase().contains(q)) {
-        hits.add(_Hit(quote, 'Personal'));
+        hits.add(_Hit(quote, 'My Decrees'));
       }
     }
     for (final circle in state.circles) {
@@ -214,7 +216,7 @@ class _HomeScreenState extends State<HomeScreen> {
       const Divider(),
       _SpaceRow(
         icon: Icons.person_outline,
-        title: 'Personal',
+        title: 'My Decrees',
         subtitle: personalCount == 0
             ? 'No decrees yet'
             : _preview(state.quotes.first.text),
@@ -225,6 +227,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       const Divider(),
+      if (state.circles.isNotEmpty) const _SectionLabel('Circles'),
       for (final circle in state.circles) ...[
         _SpaceRow(
           icon: Icons.groups_outlined,
@@ -308,7 +311,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             Text('Best: $best',
-                                style: TextStyle(color: c.muted)),
+                                style: TextStyle(fontSize: 12, color: c.blue)),
                           ],
                         ),
                       ],
@@ -328,7 +331,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       : readsToday == 1
                           ? 'You have read once today.'
                           : 'You have read $readsToday times today.',
-              style: const TextStyle(fontSize: 16),
+              style: TextStyle(fontSize: 12, color: c.muted),
             ),
             const SizedBox(height: 16),
             Divider(color: c.line),
@@ -597,9 +600,7 @@ class _SpaceRow extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
             ],
-            // Icon(Icons.chevron_right, color: c.muted),
           ],
         ),
       ),

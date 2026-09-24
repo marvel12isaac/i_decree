@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../theme.dart';
+import '../widgets/read_bolts.dart';
 import '../widgets/hold_to_read_button.dart';
 import 'quote_editor_screen.dart';
 
@@ -92,10 +93,6 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
 
     final streak = state.quoteStreak(quote.id);
     final today = state.readsTodayFor(quote.id);
-    final total = state.totalReads(quote.id);
-    final c = AppColors.of(context);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final doneColor = isDark ? c.teal : Palette.sage;
     final unlocked = _delayDone && _atEnd;    
     final lockedLabel =
         !_delayDone ? 'Take a moment to decree' : 'Scroll to the end to continue';
@@ -123,34 +120,13 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
                   children: [
                     Text(quote.text, style: quoteStyle(size: 24)),
                     const SizedBox(height: 32),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.local_fire_department_outlined,
-                          size: 20,
-                          color: streak > 0 ? c.flame : c.muted,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          streak > 0 ? '$streak-day streak' : 'No streak yet',
-                          style: const TextStyle(color: Palette.muted),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      today >= quote.targetPerDay
-                          ? 'Done for today: $today of ${quote.targetPerDay}'
-                          : '$today of ${quote.targetPerDay} today',
-                      style: TextStyle(
-                        color: today >= quote.targetPerDay
-                            ? doneColor : c.muted,
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: ReadBolts(
+                        done: today,
+                        target: quote.targetPerDay,
+                        size: 24,
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      total == 1 ? 'Decreed once in total' : 'Decreed $total times in total',
-                      style: TextStyle(color: c.muted),
                     ),
                   ],
                 ),
