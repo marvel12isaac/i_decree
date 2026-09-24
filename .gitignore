@@ -1,0 +1,39 @@
+# Flutter/Dart generated
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock.bak
+
+# Android
+android/.gradle/
+android/local.properties
+android/key.properties
+android/app/google-services.json
+*.jks
+*.keystore
+*.apk
+*.aab
+
+# iOS/macOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/GoogleService-Info.plist
+
+# Secrets and config (Stage 3: Firebase / push service)
+.env
+.env.*
+*.secret
+service-account*.json
+firebase-debug.log
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store

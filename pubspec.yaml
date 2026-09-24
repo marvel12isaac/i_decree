@@ -1,0 +1,59 @@
+name: i_decree
+description: Job 22:28 NKJV You will also declare a thing, And it will be established for you; So light will shine on your ways.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+# VERIFY: package versions below are what I believe are compatible with the
+# code in lib/. Newer major versions of flutter_local_notifications and
+# flutter_timezone changed their APIs. If you upgrade, check the changelogs
+# and update lib/services/reminder_service_mobile.dart.
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.2.0
+  google_fonts: ^8.2.1
+  flutter_local_notifications: ^22.3.1
+  timezone: ^0.11.1
+  flutter_timezone: ^5.1.0
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.8
+
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/logo_mark.png
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/launcher_icon.png"
+  remove_alpha_ios: true
+  adaptive_icon_background: "#F2F4F3"
+  adaptive_icon_foreground: "assets/icons/launcher_icon_foreground.png"
+  adaptive_icon_foreground_inset: 0
+  web:
+    generate: true
+    image_path: "assets/icons/launcher_icon.png"
+    background_color: "#F2F4F3"
+    theme_color: "#F2F4F3"
+
+flutter_native_splash:
+  color: "#F2F4F3"
+  image: assets/icons/splash_logo.png
+  color_dark: "#0E151D"
+  image_dark: assets/icons/splash_logo_dark.png
+  android_12:
+    color: "#F2F4F3"
+    image: assets/icons/splash_logo.png
+    color_dark: "#0E151D"
+    image_dark: assets/icons/splash_logo_dark.png
