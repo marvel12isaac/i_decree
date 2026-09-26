@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../theme.dart';
-import '../widgets/read_bolts.dart';
+import '../widgets/due_time.dart';
+import '../widgets/quote_text.dart';
+import '../widgets/read_crowns.dart';
 import 'quote_editor_screen.dart';
 import 'quote_view_screen.dart';
 
-/// My Decrees: the user's own quotes, with today's read progress shown as
-/// lightning bolts under each one. Swipe left to delete.
+/// My Decrees: the user's own quotes. Each row shows the text as a bold
+/// title with normal body text under it, then a due/next/last-read status
+/// with today's read progress as crowns. Swipe left to delete.
 ///
 /// (Circles have the same list, but it comes from a hosted file and can't be
 /// edited or deleted by members.)
@@ -61,6 +64,8 @@ class _QuoteRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
+    final c = AppColors.of(context);
+    final due = state.dueInfoFor(quote);
 
     return Dismissible(
       key: ValueKey(quote.id),
@@ -84,19 +89,13 @@ class _QuoteRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                quote.text,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: quoteStyle(size: 18),
-              ),
+              QuoteTitleBody(text: quote.text),
               const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: ReadBolts(
-                  done: state.readsTodayFor(quote.id),
-                  target: quote.targetPerDay,
-                ),
+              ReadCrowns(
+                done: state.readsTodayFor(quote.id),
+                target: quote.targetPerDay,
+                dueLabel: dueLabelText(context, due),
+                dueColor: dueLabelColor(due, c),
               ),
             ],
           ),

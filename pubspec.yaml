@@ -19,6 +19,7 @@ dependencies:
   timezone: ^0.11.1
   flutter_timezone: ^5.1.0
   http: ^1.6.0
+  material_symbols_icons: ^4.2960.0
 
 dev_dependencies:
   flutter_test:

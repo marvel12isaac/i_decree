@@ -9,6 +9,28 @@ import 'models.dart';
 import 'services/circle_service.dart';
 import 'services/reminder_service.dart';
 
+enum DueKind { overdue, upcoming, lastRead, none }
+
+class DueInfo {
+  DueInfo.overdue(this.minutes)
+      : kind = DueKind.overdue,
+        lastRead = null;
+  DueInfo.upcoming(this.minutes)
+      : kind = DueKind.upcoming,
+        lastRead = null;
+  DueInfo.lastReadAt(this.lastRead)
+      : kind = DueKind.lastRead,
+        minutes = null;
+  DueInfo.none()
+      : kind = DueKind.none,
+        minutes = null,
+        lastRead = null;
+
+  final DueKind kind;
+  final int? minutes;
+  final DateTime? lastRead;
+}
+
 /// A circle as the screens see it: its name and its decrees as [Quote]s.
 class Circle {
   Circle({required this.id, required this.name, required this.quotes});
@@ -53,6 +75,11 @@ class AppState extends ChangeNotifier {
   // quoteId -> (yyyy-MM-dd -> number of reads that day)
   final Map<String, Map<String, int>> _reads = {};
   final Set<String> _frozenDays = {};
+
+ 
+  // quoteId -> the moment its most recent read completed. Used only to
+  // display "last read" once every read for today is done.
+  final Map<String, DateTime> _lastReadAt = {}; 
 
   ThemeMode themeMode = ThemeMode.light;
   int tokens = startingTokens;  
@@ -102,6 +129,9 @@ class AppState extends ChangeNotifier {
     _nextNotifBase = (j['nextNotifBase'] as int?) ?? 0;
     final cnb = j['circleNotifBase'] as Map<String, dynamic>? ?? {};
     _circleNotifBase.addAll(cnb.map((k, v) => MapEntry(k, v as int)));
+    final lastRead = j['lastReadAt'] as Map<String, dynamic>? ?? {};
+    _lastReadAt.addAll(
+    lastRead.map((id, iso) => MapEntry(id, DateTime.parse(iso as String))));
   }
 
   Map<String, dynamic> _toJson() => {
@@ -114,6 +144,7 @@ class AppState extends ChangeNotifier {
         'evaluatedThrough': _evaluatedThrough,
         'nextNotifBase': _nextNotifBase,
         'circleNotifBase': _circleNotifBase,
+        'lastReadAt': _lastReadAt.map((id, time) => MapEntry(id, time.toIso8601String())),
       };
 
   Future<void> _save() =>
@@ -287,9 +318,11 @@ class AppState extends ChangeNotifier {
   /// Call when the user completes a read (after the long-press).
   Future<void> registerRead(String quoteId) async {
     processMissedDays();
-    final key = dayKey(clock());
+    final now = clock();
+    final key = dayKey(now);
     final days = _reads.putIfAbsent(quoteId, () => {});
     days[key] = (days[key] ?? 0) + 1;
+    _lastReadAt[quoteId] = now;
     final streak = dailyStreak();
     if (streak > bestDaily) bestDaily = streak;
     await _save();
@@ -316,6 +349,57 @@ class AppState extends ChangeNotifier {
 
   int unreadCountFor(List<Quote> quotes) =>
       quotes.fold(0, (sum, q) => sum + unreadCount(q));
+
+  DueInfo dueInfoFor(Quote quote) {
+    final today = readsTodayFor(quote.id);
+    if (!quote.remindersOn) {
+      final last = _lastReadAt[quote.id];
+      return last != null ? DueInfo.lastReadAt(last) : DueInfo.none();
+    }
+    final times = quote.reminderMinutes();
+    if (today >= times.length) {
+      final last = _lastReadAt[quote.id];
+      return last != null ? DueInfo.lastReadAt(last) : DueInfo.none();
+    }
+    final now = clock();
+    final nowMin = now.hour * 60 + now.minute;
+    final elapsed = times.where((t) => t <= nowMin).length;
+    return today < elapsed
+        ? DueInfo.overdue(times[today])
+        : DueInfo.upcoming(times[today]);
+  }
+
+  DueInfo spaceDueInfo(List<Quote> quotes) {
+    DueInfo? overdue;
+    DueInfo? upcoming;
+    DateTime? lastRead;
+    for (final q in quotes) {
+      final info = dueInfoFor(q);
+      switch (info.kind) {
+        case DueKind.overdue:
+          if (overdue == null || info.minutes! < overdue.minutes!) {
+            overdue = info;
+          }
+          break;
+        case DueKind.upcoming:
+          if (upcoming == null || info.minutes! < upcoming.minutes!) {
+            upcoming = info;
+          }
+          break;
+        case DueKind.lastRead:
+          if (lastRead == null || info.lastRead!.isAfter(lastRead)) {
+            lastRead = info.lastRead;
+          }
+          break;
+        case DueKind.none:
+          break;
+      }
+    }
+    if (overdue != null) return overdue;
+    if (upcoming != null) return upcoming;
+    if (lastRead != null) return DueInfo.lastReadAt(lastRead);
+    return DueInfo.none();
+  }
 
   // ------------------------------------------------------------------ theme
 

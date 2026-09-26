@@ -91,7 +91,7 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
       if (mounted) _checkExtent();
     });
 
-    final streak = state.quoteStreak(quote.id);
+    // final streak = state.quoteStreak(quote.id);
     final today = state.readsTodayFor(quote.id);
     final unlocked = _delayDone && _atEnd;    
     final lockedLabel =

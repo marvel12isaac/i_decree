@@ -81,10 +81,12 @@ class AppColors extends ThemeExtension<AppColors> {
     required this.ring,
     required this.pill,
     required this.flame,
+    required this.overdue,
   });
 
   final Color background, surface, text, muted, line, iconBg, iconFg;
   final Color teal, onTeal, blue, ring, pill, flame;
+  final Color overdue;
 
   static const light = AppColors(
     background: Palette.paper,
@@ -100,6 +102,8 @@ class AppColors extends ThemeExtension<AppColors> {
     ring: Color(0xFFB4BEC6),
     pill: Color(0xFF2F7FD8),
     flame: Color(0xFFF28C28),
+    overdue: Color(0xFFC85A41),
+    
   );
 
   static const dark = AppColors(
@@ -115,7 +119,8 @@ class AppColors extends ThemeExtension<AppColors> {
     blue: Color(0xFF6CB4F5),
     ring: Color(0xFF4A5866),
     pill: Color(0xFF1F8F81),
-    flame: Color(0xFFFFA033),
+    flame: Color(0xFFFFA033),    
+    overdue: Color(0xFFE2725B),
   );
 
   static AppColors of(BuildContext context) =>
@@ -125,7 +130,7 @@ class AppColors extends ThemeExtension<AppColors> {
   AppColors copyWith({
     Color? background, Color? surface, Color? text, Color? muted,
     Color? line, Color? iconBg, Color? iconFg, Color? teal, Color? onTeal,
-    Color? blue, Color? ring, Color? pill, Color? flame,
+    Color? blue, Color? ring, Color? pill, Color? flame, Color? overdue,
   }) =>
       AppColors(
         background: background ?? this.background,
@@ -141,6 +146,7 @@ class AppColors extends ThemeExtension<AppColors> {
         ring: ring ?? this.ring,
         pill: pill ?? this.pill,
         flame: flame ?? this.flame,
+        overdue: overdue ?? this.overdue,
       );
 
   @override
@@ -161,6 +167,7 @@ class AppColors extends ThemeExtension<AppColors> {
       ring: l(ring, other.ring),
       pill: l(pill, other.pill),
       flame: l(flame, other.flame),
+      overdue: l(overdue, other.overdue),
     );
   }
 }

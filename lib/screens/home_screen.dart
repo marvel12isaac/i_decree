@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../theme.dart';
+import '../widgets/due_time.dart';
 import 'circle_quote_list_screen.dart';
 import 'quote_list_screen.dart';
 import 'quote_view_screen.dart';
@@ -177,14 +178,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (circles.isNotEmpty) ...[
         const _SectionLabel('Circles'),
         for (final circle in circles) ...[
-          _SpaceRow(
-            icon: Icons.groups_outlined,
-            title: circle.name,
-            subtitle: _circleSubtitle(circle),
-            unread: state.unreadCountFor(circle.quotes),
-            highlight: query,
-            onTap: () => _openCircle(context, circle),
-          ),
+          _circleRow(context, state, c, circle, highlight: query),
           const Divider(),
         ],
       ],
@@ -221,6 +215,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'No decrees yet'
             : _preview(state.quotes.first.text),
         unread: state.unreadCountFor(state.quotes),
+        dueLabel: dueLabelText(context, state.spaceDueInfo(state.quotes)),
+        dueColor: dueLabelColor(state.spaceDueInfo(state.quotes), c),
         personal: true,
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const QuoteListScreen()),
@@ -229,13 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
       const Divider(),
       if (state.circles.isNotEmpty) const _SectionLabel('Circles'),
       for (final circle in state.circles) ...[
-        _SpaceRow(
-          icon: Icons.groups_outlined,
-          title: circle.name,
-          subtitle: _circleSubtitle(circle),
-          unread: state.unreadCountFor(circle.quotes),
-          onTap: () => _openCircle(context, circle),
-        ),
+        _circleRow(context, state, c, circle),
         const Divider(),
       ],
     ];
@@ -249,6 +239,27 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(
         builder: (_) => CircleQuoteListScreen(circleId: circle.id),
       ),
+    );
+  }
+
+  /// One circle's Home row, with its due/next/last-read status computed once.
+  Widget _circleRow(
+    BuildContext context,
+    AppState state,
+    AppColors c,
+    Circle circle, {
+    String highlight = '',
+  }) {
+    final due = state.spaceDueInfo(circle.quotes);
+    return _SpaceRow(
+      icon: Icons.groups_outlined,
+      title: circle.name,
+      subtitle: _circleSubtitle(circle),
+      unread: state.unreadCountFor(circle.quotes),
+      dueLabel: dueLabelText(context, due),
+      dueColor: dueLabelColor(due, c),
+      highlight: highlight,
+      onTap: () => _openCircle(context, circle),
     );
   }
 
@@ -517,6 +528,8 @@ class _SpaceRow extends StatelessWidget {
     required this.subtitle,
     required this.unread,
     required this.onTap,
+    this.dueLabel,
+    this.dueColor,
     this.personal = false,
     this.highlight = '',
   });
@@ -526,6 +539,10 @@ class _SpaceRow extends StatelessWidget {
   final String subtitle;
   final int unread;
   final VoidCallback onTap;
+
+  /// Optional due/next/last-read status shown above the unread pill.
+  final String? dueLabel;
+  final Color? dueColor;
 
   /// Personal gets a blue-tinted avatar; circles get a neutral one.
   final bool personal;
@@ -580,25 +597,39 @@ class _SpaceRow extends StatelessWidget {
                 ],
               ),
             ),
-            if (unread > 0) ...[
+            if (dueLabel != null || unread > 0) ...[
               const SizedBox(width: 8),
-              Container(
-                height: 24,
-                constraints: const BoxConstraints(minWidth: 24),
-                padding: const EdgeInsets.symmetric(horizontal: 7),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: c.pill,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  unread > 99 ? '99+' : '$unread',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (dueLabel != null)
+                    Text(
+                      dueLabel!,
+                      style: TextStyle(fontSize: 11, color: dueColor ?? c.muted),
+                    ),
+                  if (unread > 0) ...[
+                    if (dueLabel != null) const SizedBox(height: 4),
+                    Container(
+                      height: 24,
+                      constraints: const BoxConstraints(minWidth: 24),
+                      padding: const EdgeInsets.symmetric(horizontal: 7),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: c.pill,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        unread > 99 ? '99+' : '$unread',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ],
           ],
