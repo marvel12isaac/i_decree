@@ -4,6 +4,7 @@ import '../app_state.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/due_time.dart';
+import '../widgets/featured_quote_card.dart';
 import '../widgets/quote_text.dart';
 import '../widgets/read_crowns.dart';
 import 'quote_editor_screen.dart';
@@ -35,23 +36,31 @@ class QuoteListScreen extends StatelessWidget {
         icon: const Icon(Icons.add),
         label: const Text('Add a decree'),
       ),
-      body: quotes.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: Text(
-                  'No decrees yet. Add the first one you want to read every day.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 16, color: c.muted, height: 1.4),
-                ),
-              ),
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.only(bottom: 96),
-              itemCount: quotes.length,
-              separatorBuilder: (_, __) => const Divider(),
-              itemBuilder: (context, i) => _QuoteRow(quote: quotes[i]),
-            ),
+      body: Column(
+        children: [
+          const FeaturedQuoteCard(),
+          Expanded(
+            child: quotes.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 40),
+                      child: Text(
+                        'No decrees yet. Add the first one you want to read every day.',
+                        textAlign: TextAlign.center,
+                        style:
+                            TextStyle(fontSize: 16, color: c.muted, height: 1.4),
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 96),
+                    itemCount: quotes.length,
+                    separatorBuilder: (_, __) => const Divider(),
+                    itemBuilder: (context, i) => _QuoteRow(quote: quotes[i]),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

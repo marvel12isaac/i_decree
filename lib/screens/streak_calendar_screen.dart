@@ -48,7 +48,7 @@ class StreakDayDot extends StatelessWidget {
       icon = Icon(Icons.check, size: size * 0.6, color: c.onTeal);
     } else if (status == DayStatus.frozen) {
       border = c.blue;
-      icon = Icon(Icons.ac_unit, size: size * 0.6, color: c.blue);
+      icon = Icon(Icons.shield, size: size * 0.6, color: c.blue);
     } else if (status == DayStatus.future) {
       border = c.line;
     }
@@ -194,9 +194,9 @@ class _StreakCalendarScreenState extends State<StreakCalendarScreen> {
               const SizedBox(height: 16),
               Text(
                 frozenDays == 0
-                    ? '$readDays ${readDays == 1 ? 'day' : 'days'} read this month'
-                    : '$readDays ${readDays == 1 ? 'day' : 'days'} read, '
-                        '$frozenDays frozen this month',
+                    ? '$readDays ${readDays == 1 ? 'day' : 'days'} decreed this month'
+                    : '$readDays ${readDays == 1 ? 'day' : 'days'} decreed, '
+                        '$frozenDays saved this month',
                 style: TextStyle(color: c.muted),
               ),
               const SizedBox(height: 20),
@@ -206,8 +206,8 @@ class _StreakCalendarScreenState extends State<StreakCalendarScreen> {
                 spacing: 24,
                 runSpacing: 12,
                 children: [
-                  _LegendItem(status: DayStatus.read, label: 'Read'),
-                  _LegendItem(status: DayStatus.frozen, label: 'Freeze used'),
+                  _LegendItem(status: DayStatus.read, label: 'Decreed'),
+                  _LegendItem(status: DayStatus.frozen, label: 'Save used'),
                   _LegendItem(status: DayStatus.missed, label: 'Missed'),
                   _LegendItem(
                     status: DayStatus.missed,

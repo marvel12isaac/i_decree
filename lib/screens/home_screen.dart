@@ -330,7 +330,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                _FreezeBadge(tokens: state.tokens),
+                _SavesBadge(tokens: state.tokens),
               ],
             ),
             const SizedBox(height: 14),
@@ -340,8 +340,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   : readsToday == 0
                       ? 'Decree today to keep it going.'
                       : readsToday == 1
-                          ? 'You have read once today.'
-                          : 'You have read $readsToday times today.',
+                          ? 'You have decreed once today.'
+                          : 'You have decreed $readsToday times today.',
               style: TextStyle(fontSize: 12, color: c.muted),
             ),
             const SizedBox(height: 16),
@@ -433,10 +433,10 @@ List<InlineSpan> _highlightSpans(String text, String query, Color highlight) {
   return spans;
 }
 
-/// Streak freezes: shield icons on top, a small count underneath. Kept
+/// Streak saves: shield icons on top, a small count underneath. Kept
 /// quieter than the streak itself.
-class _FreezeBadge extends StatelessWidget {
-  const _FreezeBadge({required this.tokens});
+class _SavesBadge extends StatelessWidget {
+  const _SavesBadge({required this.tokens});
 
   final int tokens;
 
@@ -462,7 +462,7 @@ class _FreezeBadge extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          tokens == 1 ? '1 freeze' : '$tokens freezes',
+          tokens == 1 ? '1 save' : '$tokens saves',
           style: TextStyle(color: c.muted, fontSize: 12),
         ),
       ],

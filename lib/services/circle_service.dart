@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-// TODO: replace with your actual GitHub raw URL once you've pushed the circle JSON to a public repo, e.g. https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/circle.json
+/// Public GitHub raw URL for the hosted circle JSON.
 const String circleJsonUrl =
     'https://raw.githubusercontent.com/marvel12isaac/i_decree_circles_decrees/refs/heads/main/circle_decrees.json';
 

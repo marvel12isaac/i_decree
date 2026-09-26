@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../theme.dart';
-import '../widgets/read_bolts.dart';
 import '../widgets/hold_to_read_button.dart';
 import 'quote_editor_screen.dart';
 
@@ -64,7 +63,7 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     final today = state.readsTodayFor(quote.id);
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
-      SnackBar(content: Text('Read. $today of ${quote.targetPerDay} today.')),
+      SnackBar(content: Text('Decreed. $today of ${quote.targetPerDay} today.')),
     );
     if (Navigator.of(context).canPop()) Navigator.of(context).pop();
   }
@@ -91,9 +90,7 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
       if (mounted) _checkExtent();
     });
 
-    // final streak = state.quoteStreak(quote.id);
-    final today = state.readsTodayFor(quote.id);
-    final unlocked = _delayDone && _atEnd;    
+    final unlocked = _delayDone && _atEnd;
     final lockedLabel =
         !_delayDone ? 'Take a moment to decree' : 'Scroll to the end to continue';
 
@@ -119,15 +116,6 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(quote.text, style: quoteStyle(size: 24)),
-                    const SizedBox(height: 32),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: ReadBolts(
-                        done: today,
-                        target: quote.targetPerDay,
-                        size: 24,
-                      ),
-                    ),
                   ],
                 ),
               ),

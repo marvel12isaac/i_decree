@@ -5,8 +5,8 @@ import '../theme.dart';
 
 /// Formats [info] as the small status text shown near a decree's read
 /// progress: "Due 6:00 PM" if overdue, "Next 8:00 PM" if caught up with more
-/// due later, "Last read 7:42 AM" once every read for today is done, or null
-/// if there's nothing to show.
+/// due later, "Last decreed 7:42 AM" once every read for today is done, or
+/// null if there's nothing to show.
 String? dueLabelText(BuildContext context, DueInfo info) {
   String fmt(int minutes) =>
       TimeOfDay(hour: minutes ~/ 60, minute: minutes % 60).format(context);
@@ -16,7 +16,7 @@ String? dueLabelText(BuildContext context, DueInfo info) {
     case DueKind.upcoming:
       return 'Next ${fmt(info.minutes!)}';
     case DueKind.lastRead:
-      return 'Last read ${TimeOfDay.fromDateTime(info.lastRead!).format(context)}';
+      return 'Last decreed ${TimeOfDay.fromDateTime(info.lastRead!).format(context)}';
     case DueKind.none:
       return null;
   }

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 import 'services/circle_service.dart';
 import 'services/reminder_service.dart';
+import 'services/featured_quote_service.dart';
 
 enum DueKind { overdue, upcoming, lastRead, none }
 
@@ -52,12 +53,12 @@ class Circle {
 /// - No tokens left: the streak resets. The best daily streak is kept.
 /// - A "day" is the device's local calendar day.
 class AppState extends ChangeNotifier {
-  AppState(this._prefs, this.reminders, this.circleService);
+  AppState(this._prefs, this.reminders, this.circleService, this.featuredQuoteService,);
 
   final SharedPreferences _prefs;
   final ReminderService reminders;
   final CircleService circleService;
-
+  final FeaturedQuoteService featuredQuoteService;
   /// Overridable clock, so streak logic can be tested.
   DateTime Function() clock = DateTime.now;
 
@@ -66,10 +67,11 @@ class AppState extends ChangeNotifier {
   static const String _themeKey = 'theme_mode_v1';
   
   final List<Quote> _quotes = [];
-   final List<Circle> _circles = [];
+  final List<Circle> _circles = [];
   // circle quote id -> notifBase, assigned once and kept stable across
   // refreshes/restarts so scheduled notifications don't collide or drift.
   final Map<String, int> _circleNotifBase = {};
+  final List<FeaturedQuote> _featuredQuotes = [];
   // String? circleName;
 
   // quoteId -> (yyyy-MM-dd -> number of reads that day)
@@ -92,7 +94,8 @@ class AppState extends ChangeNotifier {
   static Future<AppState> load(ReminderService reminders) async {
     final prefs = await SharedPreferences.getInstance();
     final circleService = CircleService(url: circleJsonUrl, prefs: prefs);
-    final state = AppState(prefs, reminders, circleService);
+    final featuredQuoteService = FeaturedQuoteService(url: featuredQuotesUrl, prefs: prefs);
+    final state = AppState(prefs, reminders, circleService, featuredQuoteService);
     final raw = prefs.getString(_storageKey);
     if (raw != null) {
       try {
@@ -109,6 +112,16 @@ class AppState extends ChangeNotifier {
     final cached = circleService.loadCached();
     if (cached != null) state._applyCircleData(cached, persist: false);
     unawaited(state.refreshCircle());
+    
+    // Same idea for the featured-quotes card: show the cached set right
+    // away, then refresh it in the background.
+    final cachedFeatured = featuredQuoteService.loadCached();
+    if (cachedFeatured != null) {
+      state._featuredQuotes
+        ..clear()
+        ..addAll(cachedFeatured);
+    }
+    unawaited(state.refreshFeaturedQuotes());
 
     return state;
   }
@@ -154,6 +167,19 @@ class AppState extends ChangeNotifier {
 
   List<Quote> get quotes => List.unmodifiable(_quotes);
   List<Circle> get circles => List.unmodifiable(_circles);
+  
+  List<FeaturedQuote> get featuredQuotes =>
+      List.unmodifiable(_featuredQuotes);
+
+  Future<void> refreshFeaturedQuotes() async {
+    final data = await featuredQuoteService.refresh();
+    if (data != null) {
+      _featuredQuotes
+        ..clear()
+        ..addAll(data);
+      notifyListeners();
+    }
+  }
 
   /// Every decree from every circle, in one list.
   List<Quote> get circleQuotes =>
