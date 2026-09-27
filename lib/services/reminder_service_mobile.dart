@@ -1,6 +1,6 @@
 // VERIFY: every call into flutter_local_notifications, timezone and
 // flutter_timezone is isolated in this file. The code targets
-// flutter_local_notifications 17.x. If you upgrade the package, check its
+// flutter_local_notifications 22.x. If you upgrade the package, check its
 // changelog: parameters of initialize()/zonedSchedule() have changed between
 // major versions.
 
@@ -24,9 +24,13 @@ class MobileReminderService implements ReminderService {
     android: AndroidNotificationDetails(
       'quote_reminders',
       'Quote reminders',
-      channelDescription: 'Reminders to read your declarations',
+      channelDescription: 'Reminders to read your Decrees',
       importance: Importance.high,
       priority: Priority.high,
+      // Must be a flat single-colour drawable — NOT a mipmap launcher icon.
+      // The broadcast receiver resolves this outside the app process; a mipmap
+      // icon returns a null resource ID there and crashes with NullPointerException.
+      icon: 'ic_stat_idecree',
     ),
   );
 
@@ -47,11 +51,11 @@ class MobileReminderService implements ReminderService {
       tz.setLocalLocation(tz.getLocation(name));
     } catch (_) {
       // Ghana has no daylight saving, so this is a safe fallback for now.
-      tz.setLocalLocation(tz.getLocation('Africa/Accra'));
+      tz.setLocalLocation(tz.UTC);
     }
 
     const settings = InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_stat_idecree'),
+      android: AndroidInitializationSettings('@drawable/ic_stat_idecree'),
       iOS: DarwinInitializationSettings(
         requestAlertPermission: false,
         requestBadgePermission: false,
@@ -107,7 +111,7 @@ class MobileReminderService implements ReminderService {
         for (var i = 0; i < times.length; i++) {
           await _plugin.zonedSchedule(
             id: q.notifBase + i,
-            title: 'Time for your declaration',
+            title: 'Make a Decree!',
             body: _preview(q.text),
             scheduledDate: _nextOccurrence(times[i]),
             notificationDetails: _details,

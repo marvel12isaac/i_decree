@@ -60,7 +60,7 @@ class FeaturedQuoteService {
     try {
       return parse(raw);
     } catch (e) {
-      debugPrint('Could not read cached featured quotes: $e');
+      debugPrint('Could not read cached featured decrees: $e');
       return null;
     }
   }
@@ -71,14 +71,14 @@ class FeaturedQuoteService {
     try {
       final response = await http.get(Uri.parse(url)).timeout(_timeout);
       if (response.statusCode != 200) {
-        debugPrint('Featured quotes fetch failed: HTTP ${response.statusCode}');
+        debugPrint('Featured decrees fetch failed: HTTP ${response.statusCode}');
         return null;
       }
       final data = parse(response.body);
       await _prefs.setString(_cacheKey, response.body);
       return data;
     } catch (e) {
-      debugPrint('Featured quotes fetch failed: $e');
+      debugPrint('Featured decrees fetch failed: $e');
       return null;
     }
   }

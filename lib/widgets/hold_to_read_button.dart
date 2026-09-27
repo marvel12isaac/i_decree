@@ -71,7 +71,7 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
     return Semantics(
       button: true,
       enabled: unlocked,
-      label: unlocked ? 'Mark as read' : widget.lockedLabel,
+      label: unlocked ? 'Mark as decreed' : widget.lockedLabel,
       onLongPress: unlocked ? _complete : null,
       child: ExcludeSemantics(
         child: Listener(
@@ -87,7 +87,7 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
                   ? widget.lockedLabel
                   : holding
                       ? 'Keep holding'
-                      : 'Hold to mark as read';
+                      : 'Hold to mark as decreed';
               return ClipRRect(
                 borderRadius: BorderRadius.circular(30),
                 child: Container(

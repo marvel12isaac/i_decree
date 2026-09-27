@@ -2,16 +2,28 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
-/// Renders a decree for a list row: everything before the first line break
-/// is a bold, one-line title; everything after (with leading blank lines
-/// trimmed, so a blank separator line doesn't leave a visible gap) is normal
-/// body text directly beneath it. If the text has no line break at all, the
-/// whole thing is shown as a single bold block instead.
+/// Renders a decree: everything before the first line break is a bold
+/// title; everything after (with leading blank lines trimmed) is normal
+/// body text. If the text has no line break at all, the whole thing is
+/// shown as a single bold block instead.
+///
+/// [compact] (the default, for list rows) caps the title to one line and
+/// the body to two, with no gap between them, so a blank line in the source
+/// text doesn't leave a visible gap. Set it to false for the full reading
+/// screen: both are shown in full, with one consistent gap between them —
+/// introduced by this widget, regardless of how the source text separates
+/// them.
 class QuoteTitleBody extends StatelessWidget {
-  const QuoteTitleBody({super.key, required this.text, this.size = 18});
+  const QuoteTitleBody({
+    super.key,
+    required this.text,
+    this.size = 18,
+    this.compact = true,
+  });
 
   final String text;
   final double size;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -21,8 +33,8 @@ class QuoteTitleBody extends StatelessWidget {
     if (breakAt < 0) {
       return Text(
         text,
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
+        maxLines: compact ? 3 : null,
+        overflow: compact ? TextOverflow.ellipsis : TextOverflow.visible,
         style: bold,
       );
     }
@@ -33,12 +45,18 @@ class QuoteTitleBody extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: bold),
+        Text(
+          title,
+          maxLines: compact ? 1 : null,
+          overflow: compact ? TextOverflow.ellipsis : TextOverflow.visible,
+          style: bold,
+        ),
+        if (!compact && body.isNotEmpty) SizedBox(height: size * 0.9),
         if (body.isNotEmpty)
           Text(
             body,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+            maxLines: compact ? 2 : null,
+            overflow: compact ? TextOverflow.ellipsis : TextOverflow.visible,
             style: quoteStyle(size: size),
           ),
       ],

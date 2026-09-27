@@ -6,10 +6,16 @@ import '../theme.dart';
 
 /// Add a new quote (quote == null) or edit an existing one.
 /// Pops with `true` if the quote was deleted, so the caller can close too.
+///
+/// When adding a new quote, [prefill] (if given) seeds the initial text and
+/// settings instead of starting blank — used by "Add to My Decrees" to copy
+/// a circle decree in without saving it until the user confirms here.
+/// Ignored when [quote] is set (editing an existing decree).
 class QuoteEditorScreen extends StatefulWidget {
-  const QuoteEditorScreen({super.key, this.quote});
+  const QuoteEditorScreen({super.key, this.quote, this.prefill});
 
   final Quote? quote;
+  final Quote? prefill;
 
   @override
   State<QuoteEditorScreen> createState() => _QuoteEditorScreenState();
@@ -27,12 +33,12 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
   @override
   void initState() {
     super.initState();
-    final q = widget.quote;
-    _text = TextEditingController(text: q?.text ?? '');
-    _target = q?.targetPerDay ?? 1;
-    _startMin = q?.windowStartMin ?? 8 * 60;
-    _endMin = q?.windowEndMin ?? 20 * 60;
-    _remindersOn = q?.remindersOn ?? true;
+    final seed = widget.quote ?? widget.prefill;
+    _text = TextEditingController(text: seed?.text ?? '');
+    _target = seed?.targetPerDay ?? 1;
+    _startMin = seed?.windowStartMin ?? 8 * 60;
+    _endMin = seed?.windowEndMin ?? 20 * 60;
+    _remindersOn = seed?.remindersOn ?? true;
   }
 
   @override
@@ -63,7 +69,7 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
   Future<void> _save() async {
     final text = _text.text.trim();
     if (text.isEmpty) {
-      setState(() => _error = 'Write your quote first.');
+      setState(() => _error = 'Write your decree first.');
       return;
     }
     if (_target > 1 && _endMin <= _startMin) {
@@ -115,9 +121,15 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final isNew = widget.quote == null;
+    final isCopy = isNew && widget.prefill != null;
+    final title = widget.quote != null
+        ? 'Edit Decree'
+        : isCopy
+            ? 'Add to My Decrees'
+            : 'New Decree';
 
     return Scaffold(
-      appBar: AppBar(title: Text(isNew ? 'New quote' : 'Edit quote')),
+      appBar: AppBar(title: Text(title)),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
@@ -131,7 +143,7 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
               style: quoteStyle(size: 18),
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
-                hintText: 'Write or paste your quote or declaration',
+                hintText: 'Write or paste your decree here. You can edit it later.',
               ),
             ),
             const SizedBox(height: 24),
@@ -209,14 +221,14 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(52),
               ),
-              child: const Text('Save quote'),
+              child: Text(isCopy ? 'Save to My Decrees' : 'Save Decree'),
             ),
             if (!isNew) ...[
               const SizedBox(height: 12),
               TextButton(
                 onPressed: _delete,
                 style: TextButton.styleFrom(foregroundColor: Palette.danger),
-                child: const Text('Delete quote'),
+                child: const Text('Delete Decree'),
               ),
             ],
           ],
@@ -226,12 +238,12 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
   }
 }
 
-/// Asks the user to confirm deleting a quote.
+/// Asks the user to confirm deleting a decree.
 Future<bool> confirmDelete(BuildContext context) async {
   final result = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Delete this quote?'),
+      title: const Text('Delete this Decree?'),
       content: const Text('Its streak and read history will be lost.'),
       actions: [
         TextButton(

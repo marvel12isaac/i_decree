@@ -223,11 +223,17 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       const Divider(),
-      if (state.circles.isNotEmpty) const _SectionLabel('Circles'),
-      for (final circle in state.circles) ...[
-        _circleRow(context, state, c, circle),
-        const Divider(),
-      ],
+      const _SectionLabel('Circles'),
+      if (state.circles.isEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          child: Text('No circles available', style: TextStyle(color: c.muted)),
+        )
+      else
+        for (final circle in state.circles) ...[
+          _circleRow(context, state, c, circle),
+          const Divider(),
+        ],
     ];
   }
 

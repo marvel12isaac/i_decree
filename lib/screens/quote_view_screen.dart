@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
-import '../theme.dart';
 import '../widgets/hold_to_read_button.dart';
+import '../widgets/quote_text.dart';
 import 'quote_editor_screen.dart';
 
 /// Shows one quote. The Read button unlocks after a short fixed delay and,
@@ -77,6 +77,27 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     if (deleted == true && mounted) Navigator.of(context).pop();
   }
 
+  /// Opens the editor pre-filled from a circle decree, so the user can
+  /// adjust it before it's saved as a new personal decree. Nothing is
+  /// copied until they hit Save there. If a personal decree with the exact
+  /// same text already exists, this just says so instead.
+  void _addToMyDecrees() {
+    final state = AppScope.of(context);
+    final quote = state.quoteById(widget.quoteId);
+    if (quote == null) return;
+    final alreadyAdded =
+        state.quotes.any((q) => q.text.trim() == quote.text.trim());
+    if (alreadyAdded) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Already added to My Decrees.')),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => QuoteEditorScreen(prefill: quote)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
@@ -103,6 +124,12 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
               icon: const Icon(Icons.edit_outlined),
               onPressed: _edit,
             ),
+          if (quote.isCircle)
+            IconButton(
+              tooltip: 'Add to My Decrees',
+              icon: const Icon(Icons.playlist_add),
+              onPressed: _addToMyDecrees,
+            ),
         ],
       ),
       body: SafeArea(
@@ -115,7 +142,7 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(quote.text, style: quoteStyle(size: 24)),
+                    QuoteTitleBody(text: quote.text, size: 24, compact: false),
                   ],
                 ),
               ),
