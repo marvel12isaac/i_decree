@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
@@ -24,9 +26,21 @@ class _HomeScreenState extends State<HomeScreen> {
   static const _weekdayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
   final TextEditingController _search = TextEditingController();
+  Timer? _clockTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Rebuild every minute so due/next/overdue labels stay current without
+    // needing the user to navigate away and back.
+    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
 
   @override
   void dispose() {
+    _clockTimer?.cancel();
     _search.dispose();
     super.dispose();
   }

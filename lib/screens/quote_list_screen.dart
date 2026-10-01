@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
@@ -16,8 +18,31 @@ import 'quote_view_screen.dart';
 ///
 /// (Circles have the same list, but it comes from a hosted file and can't be
 /// edited or deleted by members.)
-class QuoteListScreen extends StatelessWidget {
+class QuoteListScreen extends StatefulWidget {
   const QuoteListScreen({super.key});
+
+  @override
+  State<QuoteListScreen> createState() => _QuoteListScreenState();
+}
+
+class _QuoteListScreenState extends State<QuoteListScreen> {
+  Timer? _clockTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Rebuild every minute so due/next/overdue labels stay current without
+    // needing the user to navigate away and back.
+    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _clockTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

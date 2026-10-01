@@ -2,6 +2,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Exact alarms fire at the scheduled time even in Doze mode.
+         SCHEDULE_EXACT_ALARM covers Android 12 (API 31–32).
+         USE_EXACT_ALARM covers Android 13+ (API 33+) and does not require
+         user approval, but Google Play may ask for justification on review. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <application
         android:label="I Decree"
         android:name="${applicationName}"
