@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 
 import '../app_state.dart';
 import '../models.dart';
@@ -14,17 +15,40 @@ import 'quote_view_screen.dart';
 ///
 /// Each row shows the text as a bold title with normal body text under it,
 /// then a due/next/last-read status with today's read progress as crowns.
-class CircleQuoteListScreen extends StatelessWidget {
+class CircleQuoteListScreen extends StatefulWidget {
   const CircleQuoteListScreen({super.key, required this.circleId});
-
   final String circleId;
+
+
+  @override
+  State<CircleQuoteListScreen> createState() => _CircleQuoteListScreenState();
+}
+
+class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
+  Timer? _clockTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Rebuild every minute so due/next/overdue labels stay current without
+    // needing the user to navigate away and back.
+    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _clockTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final c = AppColors.of(context);
 
-    final circle = state.circleById(circleId);
+    final circle = state.circleById(widget.circleId);
     final quotes = circle?.quotes ?? const <Quote>[];
 
     return Scaffold(
@@ -34,7 +58,7 @@ class CircleQuoteListScreen extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 40),
                 child: Text(
-                  'No decrees in this circle yet.',
+                  'No decrees in this Circle yet.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 16, color: c.muted, height: 1.4),
                 ),
