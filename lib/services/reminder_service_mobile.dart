@@ -1,3 +1,4 @@
+// reminder service mobile.dart
 // VERIFY: every call into flutter_local_notifications, timezone and
 // flutter_timezone is isolated in this file. The code targets
 // flutter_local_notifications 22.x. If you upgrade the package, check its
@@ -19,6 +20,11 @@ class MobileReminderService implements ReminderService {
 
   void Function(String quoteId)? _onOpenQuote;
   String? _launchQuoteId;
+
+  // Cached in init(). On Android 12+ with SCHEDULE_EXACT_ALARM revoked,
+  // exactAllowWhileIdle THROWS rather than failing silently — so we must
+  // know before scheduling, not catch it after.
+  bool _exactAlarmsAllowed = false;
 
   static const NotificationDetails _details = NotificationDetails(
     android: AndroidNotificationDetails(
@@ -51,6 +57,8 @@ class MobileReminderService implements ReminderService {
       tz.setLocalLocation(tz.getLocation(name));
     } catch (_) {
       // Ghana has no daylight saving, so this is a safe fallback for now.
+      // TODO: wrong for travellers / non-UTC device clocks — revisit before
+      // expanding beyond Ghana.
       tz.setLocalLocation(tz.UTC);
     }
 
@@ -64,12 +72,25 @@ class MobileReminderService implements ReminderService {
     );
 
     await _plugin.initialize(
-      settings: settings,          // was: settings,
+      settings: settings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
         final payload = response.payload;
         if (payload != null) _onOpenQuote?.call(payload);
       },
     );
+
+    // Capability check: exact alarms may be revoked by the user (Android 12+)
+    // or unavailable on some OEMs. If the check itself throws, assume NO.
+    try {
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      _exactAlarmsAllowed = await android?.canScheduleExactNotifications() ??
+          false;
+    } catch (e) {
+      debugPrint('Exact-alarm capability check failed: $e');
+      _exactAlarmsAllowed = false;
+    }
+    debugPrint('Exact alarms allowed: $_exactAlarmsAllowed');
 
     final launch = await _plugin.getNotificationAppLaunchDetails();
     if (launch != null && launch.didNotificationLaunchApp) {
@@ -103,30 +124,44 @@ class MobileReminderService implements ReminderService {
 
   @override
   Future<void> syncAll(List<Quote> quotes) async {
-    try {
-      await _plugin.cancelAll();
-      for (final q in quotes) {
-        if (!q.remindersOn) continue;
-        final times = q.reminderMinutes();
-        for (var i = 0; i < times.length; i++) {
+    // Cancel outside the try: if a later schedule throws we must not end up
+    // in a state where cancel succeeded but we treated the whole run as failed.
+    await _plugin.cancelAll();
+
+    final mode = _exactAlarmsAllowed
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.inexactAllowWhileIdle;
+
+    var scheduled = 0;
+    var failed = 0;
+
+    for (final q in quotes) {
+      if (!q.remindersOn) continue;
+      final times = q.reminderMinutes();
+      for (var i = 0; i < times.length; i++) {
+        try {
           await _plugin.zonedSchedule(
             id: q.notifBase + i,
             title: 'Make a Decree!',
             body: _preview(q.text),
             scheduledDate: _nextOccurrence(times[i]),
             notificationDetails: _details,
-            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            androidScheduleMode: mode,
             matchDateTimeComponents: DateTimeComponents.time,
             payload: q.id,
           );
+          scheduled++;
+        } catch (e) {
+          // Per-notification isolation: one bad quote must not wipe out the
+          // rest of the user's reminders.
+          failed++;
+          debugPrint('Schedule failed for quote ${q.id} slot $i: $e');
         }
       }
-
-      final pending = await _plugin.pendingNotificationRequests();
-      debugPrint('Reminders scheduled: ${pending.length}');
-    } catch (e, st) {
-      debugPrint('Scheduling reminders failed: $e\n$st');
     }
+
+    debugPrint('Reminders scheduled: $scheduled, failed: $failed '
+        '(mode: ${_exactAlarmsAllowed ? "exact" : "inexact"})');
   }
 
   @override
