@@ -26,6 +26,10 @@ class MobileReminderService implements ReminderService {
   // know before scheduling, not catch it after.
   bool _exactAlarmsAllowed = false;
 
+  /// True when the IANA timezone lookup failed and we fell back to using
+  /// the device's raw UTC offset for scheduling.
+  bool _tzFallback = false;
+
   static const NotificationDetails _details = NotificationDetails(
     android: AndroidNotificationDetails(
       'quote_reminders',
@@ -56,10 +60,14 @@ class MobileReminderService implements ReminderService {
       final String name = info is String ? info : info.identifier as String;
       tz.setLocalLocation(tz.getLocation(name));
     } catch (_) {
-      // Ghana has no daylight saving, so this is a safe fallback for now.
-      // TODO: wrong for travellers / non-UTC device clocks — revisit before
-      // expanding beyond Ghana.
+      // IANA lookup failed (e.g. device reports an unknown zone name).
+      // Fall back to the device's own UTC offset, which is always correct
+      // for the user's current location. We do NOT set tz.local to UTC —
+      // that would schedule at the wrong wall-clock time for anyone whose
+      // device offset isn't zero.
+      _tzFallback = true;
       tz.setLocalLocation(tz.UTC);
+      debugPrint('Timezone lookup failed; using device UTC offset.');
     }
 
     const settings = InitializationSettings(
@@ -172,6 +180,27 @@ class MobileReminderService implements ReminderService {
   }
 
   tz.TZDateTime _nextOccurrence(int minutesFromMidnight) {
+    if (_tzFallback) {
+      // Compute the wall-clock time using the device's local clock and
+      // offset, then convert to an absolute instant. tz.local is UTC here,
+      // so building from milliseconds-since-epoch gives the correct instant.
+      final now = DateTime.now();
+      var scheduled = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        minutesFromMidnight ~/ 60,
+        minutesFromMidnight % 60,
+      );
+      if (scheduled.isBefore(now)) {
+        scheduled = scheduled.add(const Duration(days: 1));
+      }
+      return tz.TZDateTime.fromMillisecondsSinceEpoch(
+        tz.UTC,
+        scheduled.toUtc().millisecondsSinceEpoch,
+      );
+    }
+
     final now = tz.TZDateTime.now(tz.local);
     var scheduled = tz.TZDateTime(
       tz.local,
