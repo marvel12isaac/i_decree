@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.i_decree"
+    namespace = "com.idecree.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
