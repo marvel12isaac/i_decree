@@ -142,7 +142,7 @@ class MobileReminderService implements ReminderService {
         try {
           await _plugin.zonedSchedule(
             id: q.notifBase + i,
-            title: 'Make a Decree!',
+            title: _title(q.text),            
             body: _preview(q.text),
             scheduledDate: _nextOccurrence(times[i]),
             notificationDetails: _details,
@@ -187,8 +187,23 @@ class MobileReminderService implements ReminderService {
     return scheduled;
   }
 
+  /// Notification title = the bold "title" part of the decree, matching the
+  /// QuoteTitleBody split in the UI: everything before the first line break.
+  /// No line break means the whole text is the title.
+  String _title(String text) {
+    final i = text.indexOf('\n');
+    final t = (i < 0 ? text : text.substring(0, i)).trim();
+    if (t.length <= 60) return t;
+    return '${t.substring(0, 57)}...';
+  }
+
+  /// Notification body = the normal-weight body part (everything after the
+  /// first line break). Falls back to the full text when there is no split.
   String _preview(String text) {
-    final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final i = text.indexOf('\n');
+    var body = i < 0 ? text : text.substring(i + 1).trim();
+    if (body.isEmpty) body = text; // title-only decree: body repeats title
+    final flat = body.replaceAll(RegExp(r'\s+'), ' ').trim();
     return flat.length <= 100 ? flat : '${flat.substring(0, 97)}...';
   }
 }
