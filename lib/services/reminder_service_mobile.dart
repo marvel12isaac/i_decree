@@ -52,22 +52,35 @@ class MobileReminderService implements ReminderService {
     _onOpenQuote = onOpenQuote;
 
     tzdata.initializeTimeZones();
+    // The timezone package's database omits some IANA alias zones (notably
+    // Africa/Accra — a Link to Africa/Abidjan). Map known aliases before
+    // giving up entirely.
+    const tzAliases = <String, String>{
+      'Africa/Accra': 'Africa/Abidjan',
+      // Add more aliases here as real devices surface them.
+    };
+
     try {
-      // Older flutter_timezone versions return a String; newer ones return an
-      // object with an `identifier`. Handle both. (VERIFY against the version
-      // you install.)
       final dynamic info = await FlutterTimezone.getLocalTimezone();
       final String name = info is String ? info : info.identifier as String;
-      tz.setLocalLocation(tz.getLocation(name));
-    } catch (_) {
-      // IANA lookup failed (e.g. device reports an unknown zone name).
-      // Fall back to the device's own UTC offset, which is always correct
-      // for the user's current location. We do NOT set tz.local to UTC —
-      // that would schedule at the wrong wall-clock time for anyone whose
-      // device offset isn't zero.
+      try {
+        tz.setLocalLocation(tz.getLocation(name));
+      } on tz.LocationNotFoundException {
+        final alias = tzAliases[name];
+        if (alias != null) {
+          tz.setLocalLocation(tz.getLocation(alias));
+          debugPrint('Timezone "$name" not in database; used alias "$alias".');
+        } else {
+          rethrow;
+        }
+      }
+    } catch (e) {
+      // Last resort: use the device's own UTC offset, which is always
+      // correct for the user's current location. We do NOT set tz.local to
+      // UTC — that would schedule at the wrong wall-clock time.
       _tzFallback = true;
       tz.setLocalLocation(tz.UTC);
-      debugPrint('Timezone lookup failed; using device UTC offset.');
+      debugPrint('Timezone lookup failed: $e — using device UTC offset.');
     }
 
     const settings = InitializationSettings(

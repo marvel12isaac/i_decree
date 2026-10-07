@@ -1,4 +1,4 @@
-package com.example.i_decree
+package com.idecree.app
 
 import io.flutter.embedding.android.FlutterActivity
 
