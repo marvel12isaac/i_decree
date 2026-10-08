@@ -69,7 +69,7 @@ class MobileReminderService implements ReminderService {
         final alias = tzAliases[name];
         if (alias != null) {
           tz.setLocalLocation(tz.getLocation(alias));
-          debugPrint('Timezone "$name" not in database; used alias "$alias".');
+          // debugPrint('Timezone "$name" not in database; used alias "$alias".');
         } else {
           rethrow;
         }
@@ -80,7 +80,7 @@ class MobileReminderService implements ReminderService {
       // UTC — that would schedule at the wrong wall-clock time.
       _tzFallback = true;
       tz.setLocalLocation(tz.UTC);
-      debugPrint('Timezone lookup failed: $e — using device UTC offset.');
+      // debugPrint('Timezone lookup failed: $e — using device UTC offset.');
     }
 
     const settings = InitializationSettings(

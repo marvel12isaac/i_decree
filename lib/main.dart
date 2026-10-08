@@ -6,6 +6,7 @@ import 'screens/home_screen.dart';
 import 'screens/quote_view_screen.dart';
 import 'services/reminder_service.dart';
 import 'theme.dart';
+// import 'services/auth_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +16,8 @@ Future<void> main() async {
     publishableKey: 'sb_publishable_ycXDAbe218WZlofKUleDzg_8n-QgCAG',
   );
 
+  // final supabase = Supabase.instance.client;
+  // final auth = AuthService(supabase);
   final reminders = createReminderService();
   final state = await AppState.load(reminders);
   runApp(IDecreeApp(state: state));
@@ -50,6 +53,11 @@ class _IDecreeAppState extends State<IDecreeApp>
     // even if the OS dropped them.
     await widget.state.syncReminders();
     final launchId = reminders.consumeLaunchQuoteId();
+
+    // final auth = AuthService(Supabase.instance.client);
+    // final user = await auth.signInWithGoogle();
+    // debugPrint('Signed in as: ${user?.id} / ${user?.email}');
+
     if (launchId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _openQuote(launchId));
     }
