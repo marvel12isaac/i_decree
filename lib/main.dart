@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_state.dart';
 import 'screens/home_screen.dart';
@@ -8,6 +9,12 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: 'https://rahdhcyizsmqvxnridva.supabase.co',
+    publishableKey: 'sb_publishable_ycXDAbe218WZlofKUleDzg_8n-QgCAG',
+  );
+
   final reminders = createReminderService();
   final state = await AppState.load(reminders);
   runApp(IDecreeApp(state: state));
@@ -27,7 +34,7 @@ class _IDecreeAppState extends State<IDecreeApp>
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final ThemeData _lightTheme = buildTheme();
   final ThemeData _darkTheme = buildDarkTheme();
-  
+
   @override
   void initState() {
     super.initState();

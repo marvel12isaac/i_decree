@@ -13,6 +13,7 @@ android/.gradle/
 android/local.properties
 android/key.properties
 android/app/google-services.json
+android/app/client_secret_2_1055203282395-a2027gvacq1sekupjr397kimhsliua62.apps.googleusercontent.com.json
 *.jks
 *.keystore
 *.apk

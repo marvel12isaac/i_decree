@@ -20,6 +20,10 @@ dependencies:
   flutter_timezone: ^5.1.0
   http: ^1.6.0
   material_symbols_icons: ^4.2960.0
+  supabase_flutter: ^2.18.0
+  google_sign_in: ^7.2.0
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
 
 dev_dependencies:
   flutter_test:
