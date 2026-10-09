@@ -153,7 +153,8 @@ class AppState extends ChangeNotifier {
   /// Rules:
   /// - reads: per quote per day, take the MAX (reads only accumulate).
   /// - quotes: union by id; same id → keep the later-updated version is updatedAt 
-  /// on Quote
+  /// on Quote so last edit wins on conflict
+  ///   and remote-only quotes are added. Revisit when Quote gains a stamp.
   /// - tokens/bestDaily: backup's tokens are authoritative (anti-abuse);
   ///   bestDaily takes the max.
   /// - frozenDays, circleNotifBase: union.
@@ -177,12 +178,28 @@ class AppState extends ChangeNotifier {
       });
     });
 
-    // Quotes: add remote-only ones (local wins on id conflict, for now).
+    // Quotes: union by id. On id conflict, the later edit wins
+    // (updatedAt; null counts as oldest — covers pre-stamp quotes).
     for (final q in (j['quotes'] as List<dynamic>? ?? [])) {
       final incoming = Quote.fromJson(q as Map<String, dynamic>);
-      if (!_quotes.any((local) => local.id == incoming.id)) {
+      final local = _quotes.where((l) => l.id == incoming.id).toList();
+      if (local.isEmpty) {
         _quotes.add(incoming);
         changed = true;
+      } else {
+        final l = local.first;
+        final localStamp = l.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final remoteStamp =
+            incoming.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        if (remoteStamp.isAfter(localStamp)) {
+          l.text = incoming.text;
+          l.targetPerDay = incoming.targetPerDay;
+          l.windowStartMin = incoming.windowStartMin;
+          l.windowEndMin = incoming.windowEndMin;
+          l.remindersOn = incoming.remindersOn;
+          l.updatedAt = incoming.updatedAt;
+          changed = true;
+        }
       }
     }
 

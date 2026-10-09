@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_state.dart';
 import '../models.dart';
+import '../services/channel_service.dart';
 import '../theme.dart';
 import '../widgets/due_time.dart';
+import 'channel_preview_screen.dart';
 import 'circle_quote_list_screen.dart';
 import 'quote_list_screen.dart';
 import 'quote_view_screen.dart';
@@ -13,8 +16,9 @@ import 'streak_calendar_screen.dart';
 
 /// Home: the app icon and theme toggle, a search field, the daily streak
 /// card, then a chat-style list of spaces (Personal, then one row per
-/// Circle). Typing in the search field swaps the list for matching circles
-/// and decrees.
+/// Circle). Typing in the search field swaps the list for matching
+/// decrees and channels (local + Supabase). A 6-character code query
+/// returns only the channel that code belongs to.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -28,9 +32,19 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _search = TextEditingController();
   Timer? _clockTimer;
 
+  // Channel search (Supabase). Debounced so typing doesn't spam the net.
+  late final ChannelService _channelService =
+    ChannelService(Supabase.instance.client);
+  Timer? _channelDebounce;
+  int _channelRequestId = 0; // guards against out-of-order responses
+  List<ChannelSummary> _channelResults = [];
+  ChannelSummary? _codeMatch;
+  bool _channelSearchLoading = false;
+
   @override
   void initState() {
     super.initState();
+    _search.addListener(_onSearchChanged);
     // Rebuild every minute so due/next/overdue labels stay current without
     // needing the user to navigate away and back.
     _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
@@ -38,9 +52,59 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _onSearchChanged() {
+    setState(() {}); // instant local results
+    _channelDebounce?.cancel();
+    final query = _search.text.trim();
+    if (query.isEmpty) {
+      _channelRequestId++;
+      _channelResults = [];
+      _codeMatch = null;
+      _channelSearchLoading = false;
+      return;
+    }
+    _channelSearchLoading = true;
+    _channelDebounce = Timer(const Duration(milliseconds: 400), () {
+      _runChannelSearch(query);
+    });
+  }
+
+  Future<void> _runChannelSearch(String query) async {
+    final id = ++_channelRequestId;
+    try {
+      if (ChannelService.looksLikeCode(query)) {
+        final match = await _channelService.findByCode(query);
+        if (!mounted || id != _channelRequestId) return;
+        setState(() {
+          _codeMatch = match;
+          _channelResults = [];
+          _channelSearchLoading = false;
+        });
+      } else {
+        final results = await _channelService.searchByName(query);
+        if (!mounted || id != _channelRequestId) return;
+        setState(() {
+          _channelResults = results;
+          _codeMatch = null;
+          _channelSearchLoading = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted || id != _channelRequestId) return;
+      // Network failure must not break local search; just show nothing.
+      setState(() {
+        _channelResults = [];
+        _codeMatch = null;
+        _channelSearchLoading = false;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _channelDebounce?.cancel();
+    _search.removeListener(_onSearchChanged);
     _search.dispose();
     super.dispose();
   }
@@ -117,10 +181,10 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
       child: TextField(
         controller: _search,
-        onChanged: (_) => setState(() {}),
+        onChanged: (_) {}, // listener handles it
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
-          hintText: 'Search',
+          hintText: 'Search decrees, channels, or code',
           hintStyle: TextStyle(color: c.muted),
           prefixIcon: Icon(Icons.search, color: c.muted),
           suffixIcon: _search.text.isEmpty
@@ -154,8 +218,30 @@ class _HomeScreenState extends State<HomeScreen> {
     String query,
   ) {
     final q = query.toLowerCase();
+    final isCode = ChannelService.looksLikeCode(query);
 
-    final circles = state.circles
+    // Code query (wireframe 2b): only the code match, no other sections.
+    if (isCode) {
+      final match = _codeMatch;
+      if (match == null) {
+        return [
+          if (_channelSearchLoading)
+            const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else
+            _emptyState(c, query),
+        ];
+      }
+      return [
+        const _SectionLabel('Channels'),
+        _channelResultRow(context, c, match, joined: false),
+      ];
+    }
+
+    // --- Local results (instant) ---
+    final localCircles = state.circles
         .where((circle) => circle.name.toLowerCase().contains(q))
         .toList();
 
@@ -173,37 +259,134 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    if (circles.isEmpty && hits.isEmpty) {
-      return [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 32, 24, 0),
-          child: Center(
-            child: Text(
-              'Nothing matches "$query".',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: c.muted),
-            ),
-          ),
-        ),
-      ];
+    // Supabase channels matching the name (local circles shown too).
+    final channelRows = <Widget>[
+      for (final circle in localCircles)
+        _channelLocalRow(context, state, c, circle),
+      for (final ch in _channelResults)
+        _channelResultRow(context, c, ch, joined: false),
+    ];
+
+    final nothingLocal = localCircles.isEmpty && hits.isEmpty;
+    final nothingRemote = _channelResults.isEmpty;
+
+    if (nothingLocal && nothingRemote && !_channelSearchLoading) {
+      return [_emptyState(c, query)];
     }
 
     return [
-      if (circles.isNotEmpty) ...[
-        const _SectionLabel('Circles'),
-        for (final circle in circles) ...[
-          _circleRow(context, state, c, circle, highlight: query),
-          const Divider(),
-        ],
-      ],
       if (hits.isNotEmpty) ...[
-        const _SectionLabel('Decrees'),
+        const _SectionLabel('My Decrees'),
         for (final hit in hits) ...[
           _DecreeHitRow(hit: hit, query: query),
           const Divider(),
         ],
       ],
+      if (channelRows.isNotEmpty) ...[
+        const _SectionLabel('Channels'),
+        for (final row in channelRows) ...[row, const Divider()],
+      ],
+      if (_channelSearchLoading)
+        const Padding(
+          padding: EdgeInsets.all(24),
+          child: Center(child: CircularProgressIndicator()),
+        ),
     ];
+  }
+
+  Widget _emptyState(AppColors c, String query) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 0),
+      child: Center(
+        child: Text(
+          'No matches — try a channel code like A1B2C3.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 16, color: c.muted),
+        ),
+      ),
+    );
+  }
+
+  /// A Supabase channel row: name, member + decree counts, Open button.
+  Widget _channelResultRow(
+    BuildContext context,
+    AppColors c,
+    ChannelSummary ch, {
+    required bool joined,
+  }) {
+    return InkWell(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ChannelPreviewScreen(channel: ch),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: c.surface,
+                border: Border.all(color: c.line),
+              ),
+              child: Icon(Icons.groups_outlined, color: c.text),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    ch.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 17, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${ch.memberCount} members · ${ch.decreesCount} decrees',
+                    style: TextStyle(color: c.muted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ChannelPreviewScreen(channel: ch),
+                ),
+              ),
+              child: const Text('Open'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A locally-known circle row in search results (existing behaviour).
+  Widget _channelLocalRow(
+    BuildContext context,
+    AppState state,
+    AppColors c,
+    Circle circle,
+  ) {
+    final due = state.spaceDueInfo(circle.quotes);
+    return _SpaceRow(
+      icon: Icons.groups_outlined,
+      title: circle.name,
+      subtitle: _circleSubtitle(circle),
+      unread: state.unreadCountFor(circle.quotes),
+      dueLabel: dueLabelText(context, due),
+      dueColor: dueLabelColor(due, c),
+      highlight: _search.text.trim(),
+      onTap: () => _openCircle(context, circle),
+    );
   }
 
   // ------------------------------------------------------------------- home
