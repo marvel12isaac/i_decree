@@ -12,6 +12,7 @@ class Quote {
     this.windowStartMin = 8 * 60,
     this.windowEndMin = 20 * 60,
     this.remindersOn = true,
+    this.updatedAt,
     this.isCircle = false,
     this.circleId,
     this.unreadCount = 0,
@@ -38,6 +39,7 @@ class Quote {
   int windowEndMin;
 
   bool remindersOn;
+  DateTime? updatedAt;   // null for quotes created before this change
 
   /// True for quotes that come from a hosted Circle file rather than the
   /// user's own personal list. Circle quotes can't be edited or deleted
@@ -69,6 +71,7 @@ class Quote {
         'remindersOn': remindersOn,
         'unreadCount': unreadCount,
         'unreadCountFor': unreadCountFor,
+        'updatedAt': updatedAt?.toIso8601String(),
       };
 
   factory Quote.fromJson(Map<String, dynamic> j) => Quote(
@@ -82,5 +85,6 @@ class Quote {
         remindersOn: (j['remindersOn'] as bool?) ?? true,
         unreadCount: (j['unreadCount'] as int?) ?? 0,
         unreadCountFor: (j['unreadCountFor'] as int?) ?? 0,
+        updatedAt: j['updatedAt'] == null ? null : DateTime.parse(j['updatedAt'] as String)      
       );
 }

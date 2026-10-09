@@ -152,9 +152,8 @@ class AppState extends ChangeNotifier {
   /// Merges a backup payload (from user_backups) into current local state.
   /// Rules:
   /// - reads: per quote per day, take the MAX (reads only accumulate).
-  /// - quotes: union by id; same id → keep the later-updated version is
-  ///   NOT possible yet (no updatedAt on Quote), so local wins on conflict
-  ///   and remote-only quotes are added. Revisit when Quote gains a stamp.
+  /// - quotes: union by id; same id → keep the later-updated version is updatedAt 
+  /// on Quote
   /// - tokens/bestDaily: backup's tokens are authoritative (anti-abuse);
   ///   bestDaily takes the max.
   /// - frozenDays, circleNotifBase: union.
@@ -222,7 +221,7 @@ class AppState extends ChangeNotifier {
   /// [_toJson] so the sign-in/restore flow can upload without reaching
   /// into privates.
   Map<String, dynamic> snapshotForBackup() => _toJson();
-  
+
   Map<String, dynamic> _toJson() => {
         'version': 1,
         'quotes': _quotes.map((q) => q.toJson()).toList(),
@@ -322,6 +321,7 @@ class AppState extends ChangeNotifier {
     q.windowStartMin = windowStartMin;
     q.windowEndMin = windowEndMin;
     q.remindersOn = remindersOn;
+    q.updatedAt = clock();
     await _save();
     notifyListeners();
     await syncReminders();
