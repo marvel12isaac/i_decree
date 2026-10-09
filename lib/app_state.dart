@@ -9,6 +9,7 @@ import 'models.dart';
 import 'services/circle_service.dart';
 import 'services/reminder_service.dart';
 import 'services/featured_quote_service.dart';
+import 'services/backup_service.dart';
 
 enum DueKind { overdue, upcoming, lastRead, none }
 
@@ -59,6 +60,7 @@ class AppState extends ChangeNotifier {
   final ReminderService reminders;
   final CircleService circleService;
   final FeaturedQuoteService featuredQuoteService;
+  BackupService? backups; // null until the user signs in
   /// Overridable clock, so streak logic can be tested.
   DateTime Function() clock = DateTime.now;
 
@@ -147,6 +149,80 @@ class AppState extends ChangeNotifier {
     lastRead.map((id, iso) => MapEntry(id, DateTime.parse(iso as String))));
   }
 
+  /// Merges a backup payload (from user_backups) into current local state.
+  /// Rules:
+  /// - reads: per quote per day, take the MAX (reads only accumulate).
+  /// - quotes: union by id; same id → keep the later-updated version is
+  ///   NOT possible yet (no updatedAt on Quote), so local wins on conflict
+  ///   and remote-only quotes are added. Revisit when Quote gains a stamp.
+  /// - tokens/bestDaily: backup's tokens are authoritative (anti-abuse);
+  ///   bestDaily takes the max.
+  /// - frozenDays, circleNotifBase: union.
+  /// - evaluatedThrough: take the EARLIER date so missed-day processing
+  ///   re-runs over any gap.
+  /// Returns true if anything changed (caller saves + notifies).
+  bool mergeBackup(Map<String, dynamic> j) {
+    var changed = false;
+
+    // Reads: max per quote per day.
+    final reads = j['reads'] as Map<String, dynamic>? ?? {};
+    reads.forEach((quoteId, days) {
+      final incoming = (days as Map<String, dynamic>)
+          .map((day, count) => MapEntry(day, count as int));
+      final local = _reads.putIfAbsent(quoteId, () => {});
+      incoming.forEach((day, count) {
+        if ((local[day] ?? 0) < count) {
+          local[day] = count;
+          changed = true;
+        }
+      });
+    });
+
+    // Quotes: add remote-only ones (local wins on id conflict, for now).
+    for (final q in (j['quotes'] as List<dynamic>? ?? [])) {
+      final incoming = Quote.fromJson(q as Map<String, dynamic>);
+      if (!_quotes.any((local) => local.id == incoming.id)) {
+        _quotes.add(incoming);
+        changed = true;
+      }
+    }
+
+    // Tokens: backup is authoritative (prevents clear-cache token refill).
+    final remoteTokens = (j['tokens'] as int?) ?? startingTokens;
+    if (remoteTokens < tokens) {
+      tokens = remoteTokens;
+      changed = true;
+    }
+
+    // Best streak: max.
+    final remoteBest = (j['bestDaily'] as int?) ?? 0;
+    if (remoteBest > bestDaily) {
+      bestDaily = remoteBest;
+      changed = true;
+    }
+
+    // Frozen days: union.
+    final remoteFrozen = (j['frozenDays'] as List<dynamic>? ?? []).cast<String>();
+    final before = _frozenDays.length;
+    _frozenDays.addAll(remoteFrozen);
+    if (_frozenDays.length != before) changed = true;
+
+    // evaluatedThrough: earlier date wins (re-process any gap).
+    final remoteEval = j['evaluatedThrough'] as String?;
+    if (remoteEval != null &&
+        (_evaluatedThrough == null || remoteEval.compareTo(_evaluatedThrough!) < 0)) {
+      _evaluatedThrough = remoteEval;
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  /// The full state as JSON, for the backup service. Public wrapper over
+  /// [_toJson] so the sign-in/restore flow can upload without reaching
+  /// into privates.
+  Map<String, dynamic> snapshotForBackup() => _toJson();
+  
   Map<String, dynamic> _toJson() => {
         'version': 1,
         'quotes': _quotes.map((q) => q.toJson()).toList(),
@@ -160,8 +236,11 @@ class AppState extends ChangeNotifier {
         'lastReadAt': _lastReadAt.map((id, time) => MapEntry(id, time.toIso8601String())),
       };
 
-  Future<void> _save() =>
-      _prefs.setString(_storageKey, jsonEncode(_toJson()));
+  Future<void> _save() {
+    // Fire-and-forget backup: debounced upload of the same snapshot.
+    backups?.scheduleUpload(_toJson());
+    return _prefs.setString(_storageKey, jsonEncode(_toJson()));
+  }
 
   // ----------------------------------------------------------------- quotes
 
