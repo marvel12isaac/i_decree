@@ -4,7 +4,7 @@ import '../services/channel_service.dart';
 import '../theme.dart';
 import '../app_state.dart';
 import '../widgets/sign_in_sheet.dart';
-
+import 'circle_quote_list_screen.dart';
 
 /// Wireframe 3: a read-only preview of a channel the user has NOT joined.
 /// Shows the decrees with a Join banner. Joining itself is built in the
@@ -71,25 +71,27 @@ class _ChannelPreviewScreenState extends State<ChannelPreviewScreen> {
       ),
       body: Column(
         children: [
-          // Join banner (wireframe 3).
-          Container(
-            color: c.surface,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Preview — Join to add this channel to your feed',
-                    style: TextStyle(fontSize: 13, color: c.muted),
+          // Join banner (wireframe 3) — hidden when already a member.
+          if (!AppScope.of(context).isMemberOf(widget.channel.id))
+            Container(
+              color: c.surface,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Preview — Join to add this channel to your feed',
+                      style: TextStyle(fontSize: 13, color: c.muted),
+                    ),
                   ),
-                ),
-                FilledButton(
-                  onPressed: _onJoinPressed,
-                  child: const Text('Join'),
-                ),
-              ],
+                  FilledButton(
+                    onPressed: _onJoinPressed,
+                    child: const Text('Join'),
+                  ),
+                ],
+              ),
             ),
-          ),
           Expanded(child: _buildBody(c, decrees)),
         ],
       ),
@@ -159,7 +161,14 @@ class _ChannelPreviewScreenState extends State<ChannelPreviewScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Joined ${widget.channel.name}!')),
       );
-      Navigator.of(context).pop(); // back Home, where it now appears
+      // Land IN the channel, not back on search results: pop to Home,
+      // then open the channel's decree list.
+      Navigator.of(context).popUntil((r) => r.isFirst);
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CircleQuoteListScreen(circleId: widget.channel.id),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

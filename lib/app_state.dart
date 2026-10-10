@@ -68,8 +68,9 @@ class AppState extends ChangeNotifier {
   late final _channelServiceForJoined =
       ChannelService(Supabase.instance.client);
   BackupService? backups; // null until the user signs in
-    bool get isSignedIn => Supabase.instance.client.auth.currentUser != null;
-
+  bool get isSignedIn => Supabase.instance.client.auth.currentUser != null;
+  bool isMemberOf(String channelId) => _joinedChannelIds.contains(channelId);
+  
   /// Overridable clock, so streak logic can be tested.
   DateTime Function() clock = DateTime.now;
 
@@ -153,8 +154,20 @@ class AppState extends ChangeNotifier {
       _prefs.setStringList(_joinedKey, _joinedChannelIds.toList());
 
   /// Fetches all joined channels from Supabase and merges them into the
-  /// feed alongside any static-JSON circles.
+  /// feed alongside any static-JSON circles. When signed in, the SERVER's
+  /// membership list is merged in first — so a cleared cache or new
+  /// device recovers the feed automatically.
   Future<void> refreshJoinedChannels() async {
+    if (isSignedIn) {
+      try {
+        final serverIds = await _channelServiceForJoined.fetchMyMembershipIds();
+        final before = _joinedChannelIds.length;
+        _joinedChannelIds.addAll(serverIds);
+        if (_joinedChannelIds.length != before) await _saveJoinedIds();
+      } catch (e) {
+        debugPrint('Membership sync failed (using local list): $e');
+      }
+    }
     if (_joinedChannelIds.isEmpty) return;
     try {
       final data = await _channelServiceForJoined.fetchJoined(

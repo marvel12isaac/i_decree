@@ -173,6 +173,16 @@ class ChannelService {
     await _client.rpc('leave_channel', params: {'p_channel': channelId});
   }
 
+    /// The channel IDs the signed-in user belongs to, straight from the
+  /// server. Used to rebuild the local joined list after data loss.
+  Future<List<String>> fetchMyMembershipIds() async {
+    final rows = await _client
+        .from('channel_memberships')
+        .select('channel_id')
+        .eq('user_id', _client.auth.currentUser!.id);
+    return rows.map((r) => r['channel_id'] as String).toList();
+  }
+
   /// Full data for every joined channel: name + decrees. Used by AppState
   /// to build the feed.
   Future<List<JoinedChannelData>> fetchJoined(List<String> channelIds) async {
