@@ -95,7 +95,8 @@ class ChannelService {
   }
 
   /// Search channels by name (public, searchable ones). Private channels
-  /// are only reachable by code.
+  /// are only reachable by code. We filter for public BOTH server-side
+  /// and client-side — the client-side check is the guarantee.
   Future<List<ChannelSummary>> searchByName(String query) async {
     final rows = await _client
         .from('channels')
@@ -105,7 +106,10 @@ class ChannelService {
         .ilike('name', '%${query.trim()}%')
         .order('name')
         .limit(20);
-    return rows.map(_summaryFrom).toList();
+    return rows
+        .where((r) => r['join_code'] == null) // defense in depth
+        .map(_summaryFrom)
+        .toList();
   }
 
   /// Exact lookup by join code. Returns null when no channel matches.
