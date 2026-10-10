@@ -88,7 +88,7 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
       setState(() => _error = 'Write your decree first.');
       return;
     }
-    if (!widget.draftMode && _target > 1 && _endMin <= _startMin) {
+    if (_target > 1 && _endMin <= _startMin) {
       setState(() => _error = 'Choose an end time after the start time.');
       return;
     }
@@ -205,6 +205,35 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
                 ),
               ],
             ),
+            if (widget.draftMode) ...[
+              // Channel decrees carry a daily period (window) that members'
+              // crowns, stats and optional reminders derive from. No
+              // "Remind me" switch here — that's each member's choice.
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(_target == 1 ? 'Decree time' : 'First decree time'),
+                trailing: Text(_toTime(_startMin).format(context),
+                    style: const TextStyle(fontSize: 16)),
+                onTap: () => _pickTime(start: true),
+              ),
+              if (_target > 1)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Last decree time'),
+                  trailing: Text(_toTime(_endMin).format(context),
+                      style: const TextStyle(fontSize: 16)),
+                  onTap: () => _pickTime(start: false),
+                ),
+              if (_target > 1)
+                const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Reads are spread evenly between the first and last time.',
+                    style: TextStyle(color: Palette.muted),
+                  ),
+                ),
+            ],
             if (!widget.draftMode) ...[
               const SizedBox(height: 8),
               SwitchListTile(

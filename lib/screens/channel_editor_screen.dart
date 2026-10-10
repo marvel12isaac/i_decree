@@ -88,6 +88,8 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
           EditorDecree(
             text: d.text,
             targetPerDay: d.targetPerDay,
+            windowStartMin: d.windowStartMin,
+            windowEndMin: d.windowEndMin,
           ),
       ]);
 

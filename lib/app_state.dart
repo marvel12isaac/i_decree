@@ -99,7 +99,7 @@ class AppState extends ChangeNotifier {
   final Map<String, DateTime> _lastReadAt = {};
 
   // IDs of Supabase channels the user has joined, persisted so the feed
-  // survives restarts. "Circles" from the static JSON remain separate.
+  // survives restarts. "Channels" from the static JSON remain separate.
   final Set<String> _joinedChannelIds = {};
   static const String _joinedKey = 'joined_channels_v1';
 

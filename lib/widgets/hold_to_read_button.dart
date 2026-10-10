@@ -8,9 +8,9 @@ import '../theme.dart';
 /// While [unlocked] is false it shows [lockedLabel] and ignores presses.
 /// Screen readers can trigger completion with the standard long-press action.
 ///
-/// All colors come from AppColors, so the button renders correctly in both
-/// light and dark mode: the outline and fill use the theme's text color and
-/// the label over the fill uses the theme's background color.
+/// Colors follow the active theme's primary color (navy in light mode, teal
+/// in dark mode — see [buildTheme] / [buildDarkTheme]), not a fixed color,
+/// so the text stays readable against its own fill in both themes.
 class HoldToReadButton extends StatefulWidget {
   const HoldToReadButton({
     super.key,
@@ -72,6 +72,9 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
   Widget build(BuildContext context) {
     final unlocked = widget.unlocked;
     final c = AppColors.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final primary = scheme.primary;
+    final onPrimary = scheme.onPrimary;
 
     return Semantics(
       button: true,
@@ -98,13 +101,7 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
                 child: Container(
                   height: 60,
                   width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: c.surface,
-                    border: Border.all(
-                      color: unlocked ? c.text : c.line,
-                      width: unlocked ? 2 : 1,
-                    ),
-                  ),
+                  color: unlocked ? primary.withAlpha(31) : c.line,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
@@ -113,15 +110,14 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
                         child: FractionallySizedBox(
                           widthFactor: progress,
                           heightFactor: 1,
-                          child: ColoredBox(color: c.text),
+                          child: ColoredBox(color: primary),
                         ),
                       ),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           if (!unlocked) ...[
-                            Icon(Icons.lock_outline,
-                                size: 18, color: c.muted),
+                            Icon(Icons.lock_outline, size: 18, color: c.muted),
                             const SizedBox(width: 8),
                           ],
                           Text(
@@ -132,8 +128,8 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
                               color: !unlocked
                                   ? c.muted
                                   : progress > 0.55
-                                      ? c.background
-                                      : c.text,
+                                      ? onPrimary
+                                      : primary,
                             ),
                           ),
                         ],

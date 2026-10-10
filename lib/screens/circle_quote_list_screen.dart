@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_state.dart';
 import '../models.dart';
@@ -14,13 +14,12 @@ import 'quote_view_screen.dart';
 
 /// One channel's decree list — the single channel screen.
 ///
-/// Member mode (default): identical to the original list — bold title/body
-/// rows, due status, crowns, tap to read.
+/// Member mode: bold title/body rows, due status, crowns, tap to read.
 ///
-/// Preview mode (entered from search when not a member): the same layout,
-/// plus a join banner under the header and "Add to My Decrees" per row.
-/// Reads and crowns only appear once joined. Counts in the header use
-/// proper plurals (0 members, 1 member, 2 members).
+/// Preview mode (entered from search when not a member): the SAME layout,
+/// plus a join banner under the header. Rows are fully tappable — the
+/// quote view itself gates decreeing/adding behind joining. Header shows
+/// member and decree counts in both modes with proper plurals.
 class CircleQuoteListScreen extends StatefulWidget {
   const CircleQuoteListScreen({
     super.key,
@@ -38,7 +37,7 @@ class CircleQuoteListScreen extends StatefulWidget {
   /// Header title override (preview mode, channel not in the feed yet).
   final String? channelName;
 
-  /// Header counts (preview mode). Null → no counts line.
+  /// Header counts (preview mode). Null → fetched live (joined channels).
   final int? memberCount;
   final int? decreesCount;
 
@@ -64,6 +63,11 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
   String? _error;
   bool _joining = false;
 
+  // Live counts for joined channels (fetched once).
+  bool _countsTried = false;
+  int? _fetchedMemberCount;
+  int? _fetchedDecreesCount;
+
   @override
   void initState() {
     super.initState();
@@ -88,17 +92,30 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
 
     final circle = state.circleById(widget.circleId);
     final inFeed = circle != null;
-    final preview = widget.isChannelPreview && !state.isMemberOf(widget.circleId);
+    final preview =
+        widget.isChannelPreview && !state.isMemberOf(widget.circleId);
 
-    if (preview && _previewDecrees == null && !_loadingPreview && _error == null) {
+    if (preview &&
+        _previewDecrees == null &&
+        !_loadingPreview &&
+        _error == null) {
       _maybeLoadPreview();
     }
 
     final title = circle?.name ?? widget.channelName ?? 'Channel';
-    final countsLine = (widget.memberCount != null || widget.decreesCount != null)
-        ? '${_plural(widget.memberCount ?? 0, 'member', 'members')} · '
-            '${_plural(widget.decreesCount ?? 0, 'decree', 'decrees')}'
+    final memberCount = widget.memberCount ?? _fetchedMemberCount;
+    final decreesCount = widget.decreesCount ?? _fetchedDecreesCount;
+    final countsLine = (memberCount != null || decreesCount != null)
+        ? '${_plural(memberCount ?? 0, 'member', 'members')} · '
+            '${_plural(decreesCount ?? 0, 'decree', 'decrees')}'
         : null;
+
+    // Joined (Supabase) channels fetch their live counts once, so members
+    // see the same header as searchers. Static-JSON circles skip this.
+    if (countsLine == null && inFeed && !_countsTried) {
+      _countsTried = true;
+      _fetchCounts();
+    }
 
     return Scaffold(
       backgroundColor: c.background,
@@ -115,7 +132,8 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       body: Column(
         children: [
           if (preview) _buildJoinBanner(context, state, c),
-          Expanded(child: _buildBody(context, state, c, preview, inFeed, circle)),
+          Expanded(
+              child: _buildBody(context, state, c, preview, inFeed, circle)),
         ],
       ),
     );
@@ -144,6 +162,20 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
         _error = 'Could not load this channel. Check your connection.';
         _loadingPreview = false;
       });
+    }
+  }
+
+  Future<void> _fetchCounts() async {
+    try {
+      final s = await ChannelService(Supabase.instance.client)
+          .fetchSummary(widget.circleId);
+      if (!mounted || s == null) return;
+      setState(() {
+        _fetchedMemberCount = s.memberCount;
+        _fetchedDecreesCount = s.decreesCount;
+      });
+    } catch (_) {
+      // Header just stays without counts.
     }
   }
 
@@ -219,8 +251,8 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_error!, textAlign: TextAlign.center,
-              style: TextStyle(color: c.muted)),
+          child: Text(_error!,
+              textAlign: TextAlign.center, style: TextStyle(color: c.muted)),
         ),
       );
     }
@@ -230,7 +262,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
         return const Center(child: CircularProgressIndicator());
       }
       final decrees = _previewDecrees ?? const <ChannelDecreePreview>[];
-            if (decrees.isEmpty) {
+      if (decrees.isEmpty) {
         return Center(
           child: Text('No decrees in this channel yet.',
               style: TextStyle(color: c.muted)),
@@ -251,7 +283,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40),
               child: Text(
-                'No decrees in this Circle yet.',
+                'No decrees in this channel yet.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 16, color: c.muted, height: 1.4),
               ),
@@ -271,8 +303,8 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
                   ),
                 ),
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 24, vertical: 18),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -311,10 +343,20 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-        child: QuoteTitleBody(text: d.text),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            QuoteTitleBody(text: d.text),
+            const SizedBox(height: 12),
+            // Empty crowns show the decree's daily target, matching how
+            // the row will look once joined. No status text (not a member).
+            ReadCrowns(done: 0, target: d.targetPerDay),
+          ],
+        ),
       ),
     );
   }
+
   // ------------------------------------------------------------ utilities
 
   /// "0 members", "1 member", "2 members" — 0 takes the plural.

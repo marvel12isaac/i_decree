@@ -64,10 +64,11 @@ class _SignInSheetState extends State<_SignInSheet> {
 
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
+      debugPrint('SIGN-IN FLOW ERROR: $e');
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = 'Sign-in failed. Check your connection and try again.';
+          _error = 'Sign-in failed: $e';
         });
       }
     }

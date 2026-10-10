@@ -1,12 +1,11 @@
 // channel_service.dart
-// Supabase queries for channel discovery: search by name, lookup by join
-// code, and fetching a channel's decrees for preview.
+// Supabase queries for channel discovery, joining, creating, and reading.
 //
 // Notes:
-// - Reads are public (RLS "read" policies), so these work signed-out —
-//   matching the browse-without-join model.
-// - This service never writes. Joining/creating live in the join flow
-//   (step 5) and channel editor (step 6).
+// - Public channel reads work signed-out (browse-without-join model).
+// - Private channels are reachable ONLY by code, via server functions
+//   (RLS hides them from direct queries; possessing the code grants access).
+// - This service never touches local state — AppState owns that.
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -45,6 +44,14 @@ class ChannelDecreePreview {
   final int targetPerDay;
 }
 
+/// A channel plus its decrees, used by the code-match path so the preview
+/// can render without a second query.
+class ChannelDetail {
+  ChannelDetail({required this.summary, required this.decrees});
+
+  final ChannelSummary summary;
+  final List<ChannelDecreePreview> decrees;
+}
 
 /// A joined channel with its full decree list — the shape AppState's
 /// feed needs.
@@ -85,6 +92,32 @@ class JoinedQuoteData {
   final int windowStartMin;
   final int windowEndMin;
   final int position;
+}
+
+/// The result of creating a channel.
+class CreatedChannel {
+  CreatedChannel({required this.id, required this.name, this.joinCode});
+
+  final String id;
+  final String name;
+
+  /// Null for public channels.
+  final String? joinCode;
+}
+
+/// A decree being drafted in the editor.
+class EditorDecree {
+  EditorDecree({
+    required this.text,
+    this.targetPerDay = 1,
+    this.windowStartMin = 8 * 60,
+    this.windowEndMin = 20 * 60,
+  });
+
+  String text;
+  int targetPerDay;
+  int windowStartMin;
+  int windowEndMin;
 }
 
 class ChannelService {
@@ -162,7 +195,21 @@ class ChannelService {
         .toList();
   }
 
-    // ------------------------------------------------------------- joining
+  /// Live member/decree counts for one channel. Used by the channel list
+  /// screen's header for joined channels, where counts weren't passed in
+  /// from search.
+  Future<ChannelSummary?> fetchSummary(String channelId) async {
+    final rows = await _client
+        .from('channels')
+        .select('id, name, description, join_code, '
+            'channel_member_counts(member_count), channel_quotes(count)')
+        .eq('id', channelId)
+        .limit(1);
+    if (rows.isEmpty) return null;
+    return _summaryFrom(rows.first);
+  }
+
+  // ------------------------------------------------------------- joining
 
   /// Joins a private channel by its 6-character code. Requires sign-in.
   /// Returns the joined channel's summary data.
@@ -172,7 +219,7 @@ class ChannelService {
     return JoinedChannelData.fromJson(res as Map<String, dynamic>);
   }
 
-  /// Joins a public channel from the preview screen. Requires sign-in.
+  /// Joins a public channel from the channel list screen. Requires sign-in.
   Future<void> join(String channelId) async {
     await _client.rpc('join_channel', params: {'p_channel': channelId});
   }
@@ -182,7 +229,7 @@ class ChannelService {
     await _client.rpc('leave_channel', params: {'p_channel': channelId});
   }
 
-    /// The channel IDs the signed-in user belongs to, straight from the
+  /// The channel IDs the signed-in user belongs to, straight from the
   /// server. Used to rebuild the local joined list after data loss.
   Future<List<String>> fetchMyMembershipIds() async {
     final rows = await _client
@@ -190,6 +237,37 @@ class ChannelService {
         .select('channel_id')
         .eq('user_id', _client.auth.currentUser!.id);
     return rows.map((r) => r['channel_id'] as String).toList();
+  }
+
+  /// Full data for every joined channel: name + decrees. Used by AppState
+  /// to build the feed.
+  Future<List<JoinedChannelData>> fetchJoined(List<String> channelIds) async {
+    if (channelIds.isEmpty) return [];
+    final rows = await _client
+        .from('channels')
+        .select('id, name, description, channel_quotes(id, text, '
+            'target_per_day, window_start_min, window_end_min, position)')
+        .inFilter('id', channelIds)
+        .order('name');
+    return rows.map((r) {
+      final quotes = (r['channel_quotes'] as List)
+          .map((q) => JoinedQuoteData(
+                id: q['id'] as String,
+                text: q['text'] as String,
+                targetPerDay: (q['target_per_day'] as int?) ?? 1,
+                windowStartMin: (q['window_start_min'] as int?) ?? 480,
+                windowEndMin: (q['window_end_min'] as int?) ?? 1200,
+                position: (q['position'] as int?) ?? 0,
+              ))
+          .toList()
+        ..sort((a, b) => a.position.compareTo(b.position));
+      return JoinedChannelData(
+        id: r['id'] as String,
+        name: r['name'] as String,
+        description: (r['description'] as String?) ?? '',
+        quotes: quotes,
+      );
+    }).toList();
   }
 
   // ------------------------------------------------------------ creating
@@ -226,41 +304,14 @@ class ChannelService {
           'channel_id': channelId,
           'text': decrees[i].text,
           'target_per_day': decrees[i].targetPerDay,
+          'window_start_min': decrees[i].windowStartMin,
+          'window_end_min': decrees[i].windowEndMin,
           'position': i,
         }
     ]);
-  }  
-
-  /// Full data for every joined channel: name + decrees. Used by AppState
-  /// to build the feed.
-  Future<List<JoinedChannelData>> fetchJoined(List<String> channelIds) async {
-    if (channelIds.isEmpty) return [];
-    final rows = await _client
-        .from('channels')
-        .select('id, name, description, channel_quotes(id, text, '
-            'target_per_day, window_start_min, window_end_min, position)')
-        .inFilter('id', channelIds)
-        .order('name');
-    return rows.map((r) {
-      final quotes = (r['channel_quotes'] as List)
-          .map((q) => JoinedQuoteData(
-                id: q['id'] as String,
-                text: q['text'] as String,
-                targetPerDay: (q['target_per_day'] as int?) ?? 1,
-                windowStartMin: (q['window_start_min'] as int?) ?? 480,
-                windowEndMin: (q['window_end_min'] as int?) ?? 1200,
-                position: (q['position'] as int?) ?? 0,
-              ))
-          .toList()
-        ..sort((a, b) => a.position.compareTo(b.position));
-      return JoinedChannelData(
-        id: r['id'] as String,
-        name: r['name'] as String,
-        description: (r['description'] as String?) ?? '',
-        quotes: quotes,
-      );
-    }).toList();
   }
+
+  // ------------------------------------------------------------- internal
 
   ChannelSummary _summaryFrom(dynamic row) {
     final r = row as Map<String, dynamic>;
@@ -283,33 +334,4 @@ class ChannelService {
       joinCode: r['join_code'] as String?,
     );
   }
-  
-}
-
-/// A channel plus its decrees, used by the code-match path so the preview
-/// can render without a second query.
-class ChannelDetail {
-  ChannelDetail({required this.summary, required this.decrees});
-
-  final ChannelSummary summary;
-  final List<ChannelDecreePreview> decrees;
-}
-
-/// The result of creating a channel.
-class CreatedChannel {
-  CreatedChannel({required this.id, required this.name, this.joinCode});
-
-  final String id;
-  final String name;
-
-  /// Null for public channels.
-  final String? joinCode;
-}
-
-/// A decree being drafted in the editor.
-class EditorDecree {
-  EditorDecree({required this.text, this.targetPerDay = 1});
-
-  String text;
-  int targetPerDay;
 }

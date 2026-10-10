@@ -8,20 +8,20 @@ import '../models.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
 import '../widgets/due_time.dart';
+import 'channel_editor_screen.dart';
 import 'circle_quote_list_screen.dart';
 import 'quote_list_screen.dart';
 import 'quote_view_screen.dart';
 import 'streak_calendar_screen.dart';
-import 'channel_editor_screen.dart';
-// channel_preview_screen.dart was deleted — the channel list screen now
-// handles preview mode itself.
-// import 'channel_preview_screen.dart';
 
 /// Home: the app icon and theme toggle, a search field, the daily streak
 /// card, then a chat-style list of spaces (Personal, then one row per
-/// Circle). Typing in the search field swaps the list for matching
+/// Circle/Channel). Typing in the search field swaps the list for matching
 /// decrees and channels (local + Supabase). A 6-character code query
 /// returns only the channel that code belongs to.
+///
+/// Channels the user already belongs to appear only as local feed rows in
+/// search — never as duplicate remote results with an Open button.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -37,7 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Channel search (Supabase). Debounced so typing doesn't spam the net.
   late final ChannelService _channelService =
-    ChannelService(Supabase.instance.client);
+      ChannelService(Supabase.instance.client);
   Timer? _channelDebounce;
   int _channelRequestId = 0; // guards against out-of-order responses
   List<ChannelSummary> _channelResults = [];
@@ -77,8 +77,6 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       if (ChannelService.looksLikeCode(query)) {
         final match = await _channelService.findByCode(query);
-        // findByCode now returns ChannelDetail (with decrees included).
-
         if (!mounted || id != _channelRequestId) return;
         setState(() {
           _codeMatch = match;
@@ -131,23 +129,23 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       },
       child: Scaffold(
-      backgroundColor: c.background,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(state, isDark, c),
-              _buildSearchField(c),
-              if (query.isEmpty)
-                ..._buildHome(context, state, c)
-              else
-                ..._buildResults(context, state, c, query),
-            ],
+        backgroundColor: c.background,
+        body: SafeArea(
+          child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeader(state, isDark, c),
+                _buildSearchField(c),
+                if (query.isEmpty)
+                  ..._buildHome(context, state, c)
+                else
+                  ..._buildResults(context, state, c, query),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -249,9 +247,18 @@ class _HomeScreenState extends State<HomeScreen> {
             _emptyState(c, query),
         ];
       }
+      // Already a member? Show the live feed row (badges, due status),
+      // not the remote search row.
+      final local = state.circleById(match.summary.id);
+      if (local != null) {
+        return [
+          const _SectionLabel('Channels'),
+          _channelLocalRow(context, state, c, local),
+        ];
+      }
       return [
         const _SectionLabel('Channels'),
-        _channelResultRow(context, c, match.summary, joined: false,
+        _channelResultRow(context, c, match.summary,
             detail: match),
       ];
     }
@@ -275,12 +282,14 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // Supabase channels matching the name (local circles shown too).
+    // Supabase channels matching the name. Channels the user already
+    // belongs to render ONLY as local feed rows — never as remote
+    // duplicates with an Open button.
     final channelRows = <Widget>[
       for (final circle in localCircles)
         _channelLocalRow(context, state, c, circle),
       for (final ch in _channelResults)
-        _channelResultRow(context, c, ch, joined: false),
+        if (!state.isMemberOf(ch.id)) _channelResultRow(context, c, ch),
     ];
 
     final nothingLocal = localCircles.isEmpty && hits.isEmpty;
@@ -328,11 +337,10 @@ class _HomeScreenState extends State<HomeScreen> {
     BuildContext context,
     AppColors c,
     ChannelSummary ch, {
-    required bool joined,
     ChannelDetail? detail,
   }) {
-    return InkWell(
-      onTap: () => Navigator.of(context).push(
+    void open() {
+      Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CircleQuoteListScreen(
             circleId: ch.id,
@@ -340,10 +348,15 @@ class _HomeScreenState extends State<HomeScreen> {
             memberCount: ch.memberCount,
             decreesCount: ch.decreesCount,
             joinCode: ch.joinCode,
+            preloadedQuotes: detail?.decrees,
             isChannelPreview: true,
           ),
         ),
-      ),
+      );
+    }
+
+    return InkWell(
+      onTap: open,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         child: Row(
@@ -372,7 +385,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${ch.memberCount} members · ${ch.decreesCount} decrees',
+                    '${_plural(ch.memberCount, 'member')} · '
+                    '${_plural(ch.decreesCount, 'decree')}',
                     style: TextStyle(color: c.muted),
                   ),
                 ],
@@ -380,18 +394,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(width: 8),
             OutlinedButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => CircleQuoteListScreen(
-                    circleId: ch.id,
-                    channelName: ch.name,
-                    memberCount: ch.memberCount,
-                    decreesCount: ch.decreesCount,
-                    joinCode: ch.joinCode,
-                    isChannelPreview: true,
-                  ),
-                ),
-              ),
+              onPressed: open,
               child: const Text('Open'),
             ),
           ],
@@ -400,7 +403,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// A locally-known circle row in search results (existing behaviour).
+  /// A locally-known circle row in search results (feed row with badges).
   Widget _channelLocalRow(
     BuildContext context,
     AppState state,
@@ -452,7 +455,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       const Divider(),
       _SectionLabel(
-        'Channels',
+        'Circles',
         trailing: TextButton.icon(
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const ChannelEditorScreen()),
@@ -464,18 +467,50 @@ class _HomeScreenState extends State<HomeScreen> {
       if (state.circles.isEmpty)
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-          child: Text('No circles available', style: TextStyle(color: c.muted)),
+          child: Text('No channels available', style: TextStyle(color: c.muted)),
         )
       else
-        for (final circle in state.circles) ...[
+        for (final circle in _channelsSorted(state)) ...[
           _circleRow(context, state, c, circle),
           const Divider(),
         ],
     ];
+
+    // (Helper below keeps build small.)
+  }
+
+  /// Channels sorted chat-style: the one with the most imminent decree on
+  /// top — overdue first (longest-waiting slot first), then upcoming
+  /// (soonest first), then recently-read, then the rest.
+  List<Circle> _channelsSorted(AppState state) {
+    int rank(DueKind k) {
+      switch (k) {
+        case DueKind.overdue:
+          return 0;
+        case DueKind.upcoming:
+          return 1;
+        case DueKind.lastRead:
+          return 2;
+        case DueKind.none:
+          return 3;
+      }
+    }
+
+    final sorted = [...state.circles];
+    sorted.sort((a, b) {
+      final da = state.spaceDueInfo(a.quotes);
+      final db = state.spaceDueInfo(b.quotes);
+      final r = rank(da.kind).compareTo(rank(db.kind));
+      if (r != 0) return r;
+      return (da.minutes ?? 0).compareTo(db.minutes ?? 0);
+    });
+    return sorted;
   }
 
   String _circleSubtitle(Circle circle) =>
-      circle.quotes.isEmpty ? 'No decrees yet' : _preview(circle.quotes.first.text);
+      circle.quotes.isEmpty
+          ? 'No decrees yet'
+          : _preview(circle.quotes.first.text);
 
   void _openCircle(BuildContext context, Circle circle) {
     Navigator.of(context).push(
@@ -565,7 +600,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             Text('Best: $best',
-                                style: TextStyle(fontSize: 12, color: c.blue)),
+                                style:
+                                    TextStyle(fontSize: 12, color: c.blue)),
                           ],
                         ),
                       ],
@@ -607,7 +643,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         const Spacer(),
                         Text('Calendar',
                             style: TextStyle(color: c.muted, fontSize: 13)),
-                        Icon(Icons.chevron_right, size: 18, color: c.muted),
+                        Icon(Icons.chevron_right,
+                            size: 18, color: c.muted),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -636,6 +673,11 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // ---------------------------------------------------------------- helpers
+
+/// "1 member" / "2 members" — 0 takes the plural. Plural is [one] + 's'
+/// unless overridden.
+String _plural(int n, String one, [String? many]) =>
+    n == 1 ? '1 $one' : '$n ${many ?? '${one}s'}';
 
 /// One search hit: a decree plus the name of the space it lives in.
 class _Hit {
@@ -856,7 +898,8 @@ class _SpaceRow extends StatelessWidget {
                   if (dueLabel != null)
                     Text(
                       dueLabel!,
-                      style: TextStyle(fontSize: 11, color: dueColor ?? c.muted),
+                      style: TextStyle(
+                          fontSize: 11, color: dueColor ?? c.muted),
                     ),
                   if (unread > 0) ...[
                     if (dueLabel != null) const SizedBox(height: 4),
