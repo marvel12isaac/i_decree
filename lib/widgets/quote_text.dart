@@ -42,24 +42,28 @@ class QuoteTitleBody extends StatelessWidget {
     final title = text.substring(0, breakAt).trim();
     final body = text.substring(breakAt + 1).trimLeft();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
+    return SizedBox(
+      // Full width so no ancestor's center alignment can shift the block;
+      // the texts always sit hard-left.
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
           maxLines: compact ? 1 : null,
           overflow: compact ? TextOverflow.ellipsis : TextOverflow.visible,
           style: bold,
         ),
         if (!compact && body.isNotEmpty) SizedBox(height: size * 0.9),
-        if (body.isNotEmpty)
           Text(
             body,
             maxLines: compact ? 2 : null,
             overflow: compact ? TextOverflow.ellipsis : TextOverflow.visible,
             style: quoteStyle(size: size),
           ),
-      ],
+        ],
+      ),
     );
   }
 }
