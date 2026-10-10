@@ -12,6 +12,7 @@ import 'services/reminder_service.dart';
 import 'services/featured_quote_service.dart';
 import 'services/backup_service.dart';
 import 'services/channel_service.dart';
+import 'services/read_upload_service.dart';
 
 enum DueKind { overdue, upcoming, lastRead, none }
 
@@ -74,7 +75,9 @@ class AppState extends ChangeNotifier {
 
   /// Supabase-backed channel queries. The client is initialized in main()
   /// before AppState.load runs.
-  late final _channelServiceForJoined = ChannelService(Supabase.instance.client);
+  late final _channelServiceForJoined =
+      ChannelService(Supabase.instance.client);
+  late final _readUploads = ReadUploadService(Supabase.instance.client);
 
   /// Overridable clock, so streak logic can be tested.
   DateTime Function() clock = DateTime.now;
@@ -99,7 +102,7 @@ class AppState extends ChangeNotifier {
   final Map<String, DateTime> _lastReadAt = {};
 
   // IDs of Supabase channels the user has joined, persisted so the feed
-  // survives restarts. "Channels" from the static JSON remain separate.
+  // survives restarts. "Circles" from the static JSON remain separate.
   final Set<String> _joinedChannelIds = {};
   static const String _joinedKey = 'joined_channels_v1';
 
@@ -122,7 +125,8 @@ class AppState extends ChangeNotifier {
     final circleService = CircleService(url: circleJsonUrl, prefs: prefs);
     final featuredQuoteService =
         FeaturedQuoteService(url: featuredQuotesUrl, prefs: prefs);
-    final state = AppState(prefs, reminders, circleService, featuredQuoteService);
+    final state =
+        AppState(prefs, reminders, circleService, featuredQuoteService);
     final raw = prefs.getString(_storageKey);
     if (raw != null) {
       try {
@@ -310,7 +314,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Every decree from every channel, in one list.
+  /// Every decree from every circle, in one list.
   List<Quote> get circleQuotes =>
       List.unmodifiable([for (final c in _circles) ...c.quotes]);
 
@@ -408,7 +412,7 @@ class AppState extends ChangeNotifier {
       _prefs.setStringList(_joinedKey, _joinedChannelIds.toList());
 
   /// Fetches all joined channels from Supabase and merges them into the
-  /// feed alongside any static-JSON channels. When signed in, the SERVER's
+  /// feed alongside any static-JSON circles. When signed in, the SERVER's
   /// membership list is merged in first — so a cleared cache or new
   /// device recovers the feed automatically.
   Future<void> refreshJoinedChannels() async {
@@ -476,7 +480,7 @@ class AppState extends ChangeNotifier {
     syncReminders();
   }
 
-  // ------------------------------------------------------- join / leave / create
+  // -------------------------------------------------- join / leave / create
 
   /// Joins a private channel by its 6-character code. Requires sign-in
   /// (the caller shows the sign-in sheet first; the server enforces it too).
@@ -487,7 +491,7 @@ class AppState extends ChangeNotifier {
     await refreshJoinedChannels();
   }
 
-  /// Joins a public channel from the preview screen. Requires sign-in.
+  /// Joins a public channel from the channel list screen. Requires sign-in.
   Future<void> joinPublicChannel(String channelId) async {
     await _channelServiceForJoined.join(channelId);
     _joinedChannelIds.add(channelId);
@@ -521,7 +525,7 @@ class AppState extends ChangeNotifier {
   }
 
   void _applyCircleData(List<CircleData> data, {required bool persist}) {
-    // A decree id must be unique across all channels (reads and reminders
+    // A decree id must be unique across all circles (reads and reminders
     // are keyed by it), so a repeated id is skipped.
     final seen = <String>{};
     _circles
@@ -539,7 +543,7 @@ class AppState extends ChangeNotifier {
     syncReminders();
   }
 
-  Quote _circleQuoteFrom(CircleQuoteData d, String circleId) {
+    Quote _circleQuoteFrom(CircleQuoteData d, String circleId) {
     var base = _circleNotifBase[d.id];
     if (base == null) {
       base = _nextNotifBase;
@@ -589,6 +593,10 @@ class AppState extends ChangeNotifier {
   int readsTodayAll() => _readsOnDayAll(dayKey(clock()));
 
   /// Call when the user completes a read (after the long-press).
+  ///
+  /// Channel-decree reads by MEMBERS are uploaded to read_events
+  /// (fire-and-forget, cumulative count) — this is what creator stats are
+  /// built from. Personal reads and non-member reads stay local-only.
   Future<void> registerRead(String quoteId) async {
     processMissedDays();
     final now = clock();
@@ -600,6 +608,38 @@ class AppState extends ChangeNotifier {
     if (streak > bestDaily) bestDaily = streak;
     await _save();
     notifyListeners();
+    _maybeUploadRead(quoteId, key);
+  }
+
+  /// Fire-and-forget upload of a channel-decree read by a member.
+  void _maybeUploadRead(String quoteId, String dayK) {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return; // not signed in: local-only
+    Quote? q;
+    for (final quote in _quotes) {
+      if (quote.id == quoteId) return; // personal decree: never uploads
+    }
+    for (final c in _circles) {
+      for (final quote in c.quotes) {
+        if (quote.id == quoteId) {
+          q = quote;
+          break;
+        }
+      }
+      if (q != null) break;
+    }
+    if (q == null || !q.isCircle) return;
+    final channelId = q.circleId;
+    if (channelId == null || !_joinedChannelIds.contains(channelId)) {
+      return; // browsing without membership: local-only (agreed rule)
+    }
+    unawaited(_readUploads.uploadRead(
+      quoteId: quoteId,
+      channelId: channelId,
+      userId: user.id,
+      dayKey: dayK,
+      countForToday: _reads[quoteId]?[dayK] ?? 1,
+    ));
   }
 
   // ---------------------------------------------------------------- streaks

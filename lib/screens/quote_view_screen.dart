@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../models.dart';
 import '../widgets/hold_to_read_button.dart';
 import '../widgets/quote_text.dart';
+import '../theme.dart';
 import '../widgets/sign_in_sheet.dart';
 import 'quote_editor_screen.dart';
 
@@ -255,6 +256,7 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     if (quote == null) {
       return const Scaffold(body: SizedBox.shrink());
     }
+    final decreedToday = state.readsTodayFor(quote.id) >= quote.targetPerDay;
 
     // Check after layout whether the text fits without scrolling.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -298,6 +300,24 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     QuoteTitleBody(text: quote.text, size: 24, compact: false),
+                    if (decreedToday) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Icon(Icons.check_circle_outline,
+                              size: 18, color: AppColors.of(context).teal),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Decreed today ✓',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.of(context).teal,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
