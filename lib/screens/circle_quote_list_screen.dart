@@ -1,24 +1,55 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
 
 import '../app_state.dart';
 import '../models.dart';
+import '../services/channel_service.dart';
 import '../theme.dart';
 import '../widgets/due_time.dart';
 import '../widgets/quote_text.dart';
 import '../widgets/read_crowns.dart';
+import '../widgets/sign_in_sheet.dart';
 import 'quote_view_screen.dart';
 
-/// One Circle's quote list: same look as the personal list, but read-only —
-/// no add button, no swipe-to-delete, since the content comes from the
-/// hosted file and members can't edit it.
+/// One channel's decree list — the single channel screen.
 ///
-/// Each row shows the text as a bold title with normal body text under it,
-/// then a due/next/last-read status with today's read progress as crowns.
+/// Member mode (default): identical to the original list — bold title/body
+/// rows, due status, crowns, tap to read.
+///
+/// Preview mode (entered from search when not a member): the same layout,
+/// plus a join banner under the header and "Add to My Decrees" per row.
+/// Reads and crowns only appear once joined. Counts in the header use
+/// proper plurals (0 members, 1 member, 2 members).
 class CircleQuoteListScreen extends StatefulWidget {
-  const CircleQuoteListScreen({super.key, required this.circleId});
+  const CircleQuoteListScreen({
+    super.key,
+    required this.circleId,
+    this.channelName,
+    this.memberCount,
+    this.decreesCount,
+    this.joinCode,
+    this.preloadedQuotes,
+    this.isChannelPreview = false,
+  });
+
   final String circleId;
 
+  /// Header title override (preview mode, channel not in the feed yet).
+  final String? channelName;
+
+  /// Header counts (preview mode). Null → no counts line.
+  final int? memberCount;
+  final int? decreesCount;
+
+  /// Set when the user arrived via a code match; joining uses the code.
+  final String? joinCode;
+
+  /// Decrees already fetched (code-match path). Null → fetch on open.
+  final List<ChannelDecreePreview>? preloadedQuotes;
+
+  /// True when opened from a channel search result.
+  final bool isChannelPreview;
 
   @override
   State<CircleQuoteListScreen> createState() => _CircleQuoteListScreenState();
@@ -26,6 +57,12 @@ class CircleQuoteListScreen extends StatefulWidget {
 
 class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
   Timer? _clockTimer;
+
+  // Preview-mode decree list (fetched or preloaded). Null in member mode.
+  List<ChannelDecreePreview>? _previewDecrees;
+  bool _loadingPreview = false;
+  String? _error;
+  bool _joining = false;
 
   @override
   void initState() {
@@ -35,6 +72,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
+    _maybeLoadPreview();
   }
 
   @override
@@ -49,54 +87,244 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     final c = AppColors.of(context);
 
     final circle = state.circleById(widget.circleId);
-    final quotes = circle?.quotes ?? const <Quote>[];
+    final inFeed = circle != null;
+    final preview = widget.isChannelPreview && !state.isMemberOf(widget.circleId);
+
+    if (preview && _previewDecrees == null && !_loadingPreview && _error == null) {
+      _maybeLoadPreview();
+    }
+
+    final title = circle?.name ?? widget.channelName ?? 'Channel';
+    final countsLine = (widget.memberCount != null || widget.decreesCount != null)
+        ? '${_plural(widget.memberCount ?? 0, 'member', 'members')} · '
+            '${_plural(widget.decreesCount ?? 0, 'decree', 'decrees')}'
+        : null;
 
     return Scaffold(
-      appBar: AppBar(title: Text(circle?.name ?? 'Circle')),
-      body: quotes.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: Text(
-                  'No decrees in this Circle yet.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 16, color: c.muted, height: 1.4),
-                ),
-              ),
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.only(bottom: 24),
-              itemCount: quotes.length,
-              separatorBuilder: (_, __) => const Divider(),
-              itemBuilder: (context, i) {
-                final quote = quotes[i];
-                final due = state.dueInfoFor(quote);
-                return InkWell(
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => QuoteViewScreen(quoteId: quote.id),
-                    ),
-                  ),
-                  child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        QuoteTitleBody(text: quote.text),
-                        const SizedBox(height: 12),
-                        ReadCrowns(
-                          done: state.readsTodayFor(quote.id),
-                          target: quote.targetPerDay,
-                          dueLabel: dueLabelText(context, due),
-                          dueColor: dueLabelColor(due, c),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
+      backgroundColor: c.background,
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 17)),
+            if (countsLine != null)
+              Text(countsLine, style: TextStyle(fontSize: 12, color: c.muted)),
+          ],
+        ),
+      ),
+      body: Column(
+        children: [
+          if (preview) _buildJoinBanner(context, state, c),
+          Expanded(child: _buildBody(context, state, c, preview, inFeed, circle)),
+        ],
+      ),
     );
   }
+
+  // ------------------------------------------------------------- preview
+
+  Future<void> _maybeLoadPreview() async {
+    final preloaded = widget.preloadedQuotes;
+    if (preloaded != null) {
+      _previewDecrees = preloaded;
+      return;
+    }
+    setState(() => _loadingPreview = true);
+    try {
+      final d = await ChannelService(Supabase.instance.client)
+          .fetchDecrees(widget.circleId);
+      if (!mounted) return;
+      setState(() {
+        _previewDecrees = d;
+        _loadingPreview = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not load this channel. Check your connection.';
+        _loadingPreview = false;
+      });
+    }
+  }
+
+  Widget _buildJoinBanner(BuildContext context, AppState state, AppColors c) {
+    return Container(
+      color: c.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Preview — Join to add this channel to your feed',
+              style: TextStyle(fontSize: 13, color: c.muted),
+            ),
+          ),
+          FilledButton(
+            onPressed: _joining ? null : _onJoinPressed,
+            child: _joining
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Text('Join'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _onJoinPressed() async {
+    final state = AppScope.of(context);
+    if (!state.isSignedIn) {
+      final ok = await showSignInSheet(context, state);
+      if (!ok || !mounted) return;
+    }
+    setState(() => _joining = true);
+    try {
+      final code = widget.joinCode;
+      if (code != null) {
+        await state.joinChannelByCode(code);
+      } else {
+        await state.joinPublicChannel(widget.circleId);
+      }
+      // No navigation needed: build() re-runs on notifyListeners and the
+      // screen switches itself into member mode.
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not join. Try again.')),
+      );
+    } finally {
+      if (mounted) setState(() => _joining = false);
+    }
+  }
+
+  // ----------------------------------------------------------------- body
+
+  Widget _buildBody(
+    BuildContext context,
+    AppState state,
+    AppColors c,
+    bool preview,
+    bool inFeed,
+    Circle? circle,
+  ) {
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(_error!, textAlign: TextAlign.center,
+              style: TextStyle(color: c.muted)),
+        ),
+      );
+    }
+
+    if (preview) {
+      if (_loadingPreview) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      final decrees = _previewDecrees ?? const <ChannelDecreePreview>[];
+            if (decrees.isEmpty) {
+        return Center(
+          child: Text('No decrees in this channel yet.',
+              style: TextStyle(color: c.muted)),
+        );
+      }
+      return ListView.separated(
+        padding: const EdgeInsets.only(bottom: 24),
+        itemCount: decrees.length,
+        separatorBuilder: (_, __) => const Divider(),
+        itemBuilder: (context, i) => _previewRow(context, state, decrees[i]),
+      );
+    }
+
+    // Member mode — the original behaviour, unchanged.
+    final quotes = inFeed ? circle!.quotes : const <Quote>[];
+    return quotes.isEmpty
+        ? Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Text(
+                'No decrees in this Circle yet.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: c.muted, height: 1.4),
+              ),
+            ),
+          )
+        : ListView.separated(
+            padding: const EdgeInsets.only(bottom: 24),
+            itemCount: quotes.length,
+            separatorBuilder: (_, __) => const Divider(),
+            itemBuilder: (context, i) {
+              final quote = quotes[i];
+              final due = state.dueInfoFor(quote);
+              return InkWell(
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => QuoteViewScreen(quoteId: quote.id),
+                  ),
+                ),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      QuoteTitleBody(text: quote.text),
+                      const SizedBox(height: 12),
+                      ReadCrowns(
+                        done: state.readsTodayFor(quote.id),
+                        target: quote.targetPerDay,
+                        dueLabel: dueLabelText(context, due),
+                        dueColor: dueLabelColor(due, c),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+  }
+
+  Widget _previewRow(
+    BuildContext context,
+    AppState state,
+    ChannelDecreePreview d,
+  ) {
+    final c = AppColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: QuoteTitleBody(text: d.text),
+          ),
+          IconButton(
+            tooltip: 'Add to My Decrees',
+            icon: Icon(Icons.playlist_add, color: c.text),
+            onPressed: () async {
+              await state.addQuote(
+                text: d.text,
+                targetPerDay: d.targetPerDay,
+                windowStartMin: 8 * 60,
+                windowEndMin: 20 * 60,
+                remindersOn: true,
+              );
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Added to My Decrees')),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------ utilities
+
+  /// "0 members", "1 member", "2 members" — 0 takes the plural.
+  String _plural(int n, String one, String many) =>
+      n == 1 ? '1 $one' : '$n $many';
 }

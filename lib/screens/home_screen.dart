@@ -8,12 +8,14 @@ import '../models.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
 import '../widgets/due_time.dart';
-import 'channel_preview_screen.dart';
 import 'circle_quote_list_screen.dart';
 import 'quote_list_screen.dart';
 import 'quote_view_screen.dart';
 import 'streak_calendar_screen.dart';
 import 'channel_editor_screen.dart';
+// channel_preview_screen.dart was deleted — the channel list screen now
+// handles preview mode itself.
+// import 'channel_preview_screen.dart';
 
 /// Home: the app icon and theme toggle, a search field, the daily streak
 /// card, then a chat-style list of spaces (Personal, then one row per
@@ -119,7 +121,16 @@ class _HomeScreenState extends State<HomeScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final query = _search.text.trim();
 
-    return Scaffold(
+    return PopScope(
+      canPop: query.isEmpty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          // Back from search results = clear the search, stay on Home.
+          _search.clear();
+          setState(() {});
+        }
+      },
+      child: Scaffold(
       backgroundColor: c.background,
       body: SafeArea(
         child: SingleChildScrollView(
@@ -136,6 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -322,8 +334,14 @@ class _HomeScreenState extends State<HomeScreen> {
     return InkWell(
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
-                    builder: (_) => ChannelPreviewScreen(
-              channel: ch, preloaded: detail?.decrees),
+          builder: (_) => CircleQuoteListScreen(
+            circleId: ch.id,
+            channelName: ch.name,
+            memberCount: ch.memberCount,
+            decreesCount: ch.decreesCount,
+            joinCode: ch.joinCode,
+            isChannelPreview: true,
+          ),
         ),
       ),
       child: Padding(
@@ -364,8 +382,14 @@ class _HomeScreenState extends State<HomeScreen> {
             OutlinedButton(
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => ChannelPreviewScreen(
-                    channel: ch, preloaded: detail?.decrees),
+                  builder: (_) => CircleQuoteListScreen(
+                    circleId: ch.id,
+                    channelName: ch.name,
+                    memberCount: ch.memberCount,
+                    decreesCount: ch.decreesCount,
+                    joinCode: ch.joinCode,
+                    isChannelPreview: true,
+                  ),
                 ),
               ),
               child: const Text('Open'),

@@ -18,6 +18,7 @@ class ChannelSummary {
     required this.description,
     required this.memberCount,
     required this.decreesCount,
+    this.joinCode,
   });
 
   final String id;
@@ -25,6 +26,10 @@ class ChannelSummary {
   final String description;
   final int memberCount;
   final int decreesCount;
+
+  /// Set only when the caller already knows the code (code-match path).
+  /// Name-search results never carry it — public channels don't need one.
+  final String? joinCode;
 }
 
 /// A preview decree: the fields the read-only list screen needs.
@@ -275,6 +280,7 @@ class ChannelService {
       description: (r['description'] as String?) ?? '',
       memberCount: memberCount,
       decreesCount: decreesCount,
+      joinCode: r['join_code'] as String?,
     );
   }
   
