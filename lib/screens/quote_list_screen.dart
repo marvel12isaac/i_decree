@@ -16,7 +16,7 @@ import 'quote_view_screen.dart';
 /// title with normal body text under it, then a due/next/last-read status
 /// with today's read progress as crowns. Swipe left to delete.
 ///
-/// (Circles have the same list, but it comes from a hosted file and can't be
+/// (Channels have the same list, but it comes from a hosted file and can't be
 /// edited or deleted by members.)
 class QuoteListScreen extends StatefulWidget {
   const QuoteListScreen({super.key});

@@ -16,7 +16,7 @@ import 'streak_calendar_screen.dart';
 
 /// Home: the app icon and theme toggle, a search field, the daily streak
 /// card, then a chat-style list of spaces (Personal, then one row per
-/// Circle/Channel). Typing in the search field swaps the list for matching
+/// Channel). Typing in the search field swaps the list for matching
 /// decrees and channels (local + Supabase). A 6-character code query
 /// returns only the channel that code belongs to.
 ///
@@ -403,7 +403,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// A locally-known circle row in search results (feed row with badges).
+  /// A locally-known channel row in search results (feed row with badges).
   Widget _channelLocalRow(
     BuildContext context,
     AppState state,
@@ -455,7 +455,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       const Divider(),
       _SectionLabel(
-        'Circles',
+        'Channels',
         trailing: TextButton.icon(
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const ChannelEditorScreen()),
@@ -520,7 +520,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// One circle's Home row, with its due/next/last-read status computed once.
+  /// One Channel's Home row, with its due/next/last-read status computed once.
   Widget _circleRow(
     BuildContext context,
     AppState state,
@@ -836,7 +836,7 @@ class _SpaceRow extends StatelessWidget {
   final String? dueLabel;
   final Color? dueColor;
 
-  /// Personal gets a blue-tinted avatar; circles get a neutral one.
+  /// Personal gets a blue-tinted avatar; channels get a neutral one.
   final bool personal;
 
   /// Search text to highlight inside [title].

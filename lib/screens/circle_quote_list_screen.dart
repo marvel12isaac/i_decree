@@ -111,7 +111,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
         : null;
 
     // Joined (Supabase) channels fetch their live counts once, so members
-    // see the same header as searchers. Static-JSON circles skip this.
+    // see the same header as searchers. Static-JSON channels skip this.
     if (countsLine == null && inFeed && !_countsTried) {
       _countsTried = true;
       _fetchCounts();

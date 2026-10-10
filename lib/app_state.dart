@@ -310,7 +310,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Every decree from every circle, in one list.
+  /// Every decree from every channel, in one list.
   List<Quote> get circleQuotes =>
       List.unmodifiable([for (final c in _circles) ...c.quotes]);
 
@@ -408,7 +408,7 @@ class AppState extends ChangeNotifier {
       _prefs.setStringList(_joinedKey, _joinedChannelIds.toList());
 
   /// Fetches all joined channels from Supabase and merges them into the
-  /// feed alongside any static-JSON circles. When signed in, the SERVER's
+  /// feed alongside any static-JSON channels. When signed in, the SERVER's
   /// membership list is merged in first — so a cleared cache or new
   /// device recovers the feed automatically.
   Future<void> refreshJoinedChannels() async {
@@ -521,7 +521,7 @@ class AppState extends ChangeNotifier {
   }
 
   void _applyCircleData(List<CircleData> data, {required bool persist}) {
-    // A decree id must be unique across all circles (reads and reminders
+    // A decree id must be unique across all channels (reads and reminders
     // are keyed by it), so a repeated id is skipped.
     final seen = <String>{};
     _circles

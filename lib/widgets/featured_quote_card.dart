@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../theme.dart';
 
-/// A card that rotates through the app's pre-loaded (not circle, not
+/// A card that rotates through the app's pre-loaded (not channel, not
 /// personal) featured quotes every couple of minutes. Tapping it expands the
 /// text only if it was too long to show in full; a quote that already fits
 /// isn't tappable. Shows nothing until at least one featured quote has
