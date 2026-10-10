@@ -13,6 +13,7 @@ import 'circle_quote_list_screen.dart';
 import 'quote_list_screen.dart';
 import 'quote_view_screen.dart';
 import 'streak_calendar_screen.dart';
+import 'channel_editor_screen.dart';
 
 /// Home: the app icon and theme toggle, a search field, the daily streak
 /// card, then a chat-style list of spaces (Personal, then one row per
@@ -426,7 +427,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       const Divider(),
-      const _SectionLabel('Circles'),
+      _SectionLabel(
+        'Channels',
+        trailing: TextButton.icon(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const ChannelEditorScreen()),
+          ),
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('New'),
+        ),
+      ),
       if (state.circles.isEmpty)
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
@@ -680,22 +690,29 @@ class _SavesBadge extends StatelessWidget {
 }
 
 class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
+  const _SectionLabel(this.text, {this.trailing});
 
   final String text;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: c.muted,
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-        ),
+      child: Row(
+        children: [
+          Text(
+            text,
+            style: TextStyle(
+              color: c.muted,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(),
+          if (trailing != null) trailing!,
+        ],
       ),
     );
   }

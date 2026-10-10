@@ -6,7 +6,6 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-
 import 'models.dart';
 import 'services/circle_service.dart';
 import 'services/reminder_service.dart';
@@ -45,7 +44,8 @@ class Circle {
   final List<Quote> quotes;
 }
 
-/// All app data lives on the device (Stage 1).
+/// All app data lives on the device first (local-first), with Supabase
+/// backing for channels, identity, and personal-state backups.
 ///
 /// Streak rules (agreed defaults):
 /// - Daily streak: a day counts if at least one quote was read that day.
@@ -57,60 +57,71 @@ class Circle {
 /// - No tokens left: the streak resets. The best daily streak is kept.
 /// - A "day" is the device's local calendar day.
 class AppState extends ChangeNotifier {
-  AppState(this._prefs, this.reminders, this.circleService, this.featuredQuoteService,);
+  AppState(
+    this._prefs,
+    this.reminders,
+    this.circleService,
+    this.featuredQuoteService,
+  );
 
   final SharedPreferences _prefs;
   final ReminderService reminders;
   final CircleService circleService;
   final FeaturedQuoteService featuredQuoteService;
-    // Created lazily; the Supabase client is initialized in main() before
-  // AppState.load runs.
-  late final _channelServiceForJoined =
-      ChannelService(Supabase.instance.client);
-  BackupService? backups; // null until the user signs in
-  bool get isSignedIn => Supabase.instance.client.auth.currentUser != null;
-  bool isMemberOf(String channelId) => _joinedChannelIds.contains(channelId);
-  
+
+  /// Null until the user signs in; the sign-in sheet attaches it.
+  BackupService? backups;
+
+  /// Supabase-backed channel queries. The client is initialized in main()
+  /// before AppState.load runs.
+  late final _channelServiceForJoined = ChannelService(Supabase.instance.client);
+
   /// Overridable clock, so streak logic can be tested.
   DateTime Function() clock = DateTime.now;
 
   static const String _storageKey = 'app_state_v1';
   static const int startingTokens = 2;
   static const String _themeKey = 'theme_mode_v1';
-  
+
   final List<Quote> _quotes = [];
   final List<Circle> _circles = [];
   // circle quote id -> notifBase, assigned once and kept stable across
   // refreshes/restarts so scheduled notifications don't collide or drift.
   final Map<String, int> _circleNotifBase = {};
   final List<FeaturedQuote> _featuredQuotes = [];
-  // String? circleName;
 
   // quoteId -> (yyyy-MM-dd -> number of reads that day)
   final Map<String, Map<String, int>> _reads = {};
   final Set<String> _frozenDays = {};
 
- 
   // quoteId -> the moment its most recent read completed. Used only to
   // display "last read" once every read for today is done.
-  final Map<String, DateTime> _lastReadAt = {}; 
+  final Map<String, DateTime> _lastReadAt = {};
 
-  ThemeMode themeMode = ThemeMode.light;
-  int tokens = startingTokens;  
-  int bestDaily = 0;
-  String? _evaluatedThrough; // last past day already checked for a miss
-  int _nextNotifBase = 0;
   // IDs of Supabase channels the user has joined, persisted so the feed
   // survives restarts. "Circles" from the static JSON remain separate.
   final Set<String> _joinedChannelIds = {};
   static const String _joinedKey = 'joined_channels_v1';
+
+  ThemeMode themeMode = ThemeMode.light;
+  int tokens = startingTokens;
+  int bestDaily = 0;
+  String? _evaluatedThrough; // last past day already checked for a miss
+  int _nextNotifBase = 0;
+
+  // ------------------------------------------------------- identity / auth
+
+  bool get isSignedIn => Supabase.instance.client.auth.currentUser != null;
+
+  bool isMemberOf(String channelId) => _joinedChannelIds.contains(channelId);
 
   // ---------------------------------------------------------------- loading
 
   static Future<AppState> load(ReminderService reminders) async {
     final prefs = await SharedPreferences.getInstance();
     final circleService = CircleService(url: circleJsonUrl, prefs: prefs);
-    final featuredQuoteService = FeaturedQuoteService(url: featuredQuotesUrl, prefs: prefs);
+    final featuredQuoteService =
+        FeaturedQuoteService(url: featuredQuotesUrl, prefs: prefs);
     final state = AppState(prefs, reminders, circleService, featuredQuoteService);
     final raw = prefs.getString(_storageKey);
     if (raw != null) {
@@ -128,8 +139,6 @@ class AppState extends ChangeNotifier {
     final cached = circleService.loadCached();
     if (cached != null) state._applyCircleData(cached, persist: false);
     unawaited(state.refreshCircle());
-        state._loadJoinedIds();
-    unawaited(state.refreshJoinedChannels());
 
     // Same idea for the featured-quotes card: show the cached set right
     // away, then refresh it in the background.
@@ -141,106 +150,12 @@ class AppState extends ChangeNotifier {
     }
     unawaited(state.refreshFeaturedQuotes());
 
+    // Joined Supabase channels: load the persisted ID list, then refresh
+    // from the server (which also re-syncs memberships when signed in).
+    state._loadJoinedIds();
+    unawaited(state.refreshJoinedChannels());
+
     return state;
-  }
-
-  void _loadJoinedIds() {
-    _joinedChannelIds
-      ..clear()
-      ..addAll(_prefs.getStringList(_joinedKey) ?? const []);
-  }
-
-  Future<void> _saveJoinedIds() =>
-      _prefs.setStringList(_joinedKey, _joinedChannelIds.toList());
-
-  /// Fetches all joined channels from Supabase and merges them into the
-  /// feed alongside any static-JSON circles. When signed in, the SERVER's
-  /// membership list is merged in first — so a cleared cache or new
-  /// device recovers the feed automatically.
-  Future<void> refreshJoinedChannels() async {
-    if (isSignedIn) {
-      try {
-        final serverIds = await _channelServiceForJoined.fetchMyMembershipIds();
-        final before = _joinedChannelIds.length;
-        _joinedChannelIds.addAll(serverIds);
-        if (_joinedChannelIds.length != before) await _saveJoinedIds();
-      } catch (e) {
-        debugPrint('Membership sync failed (using local list): $e');
-      }
-    }
-    if (_joinedChannelIds.isEmpty) return;
-    try {
-      final data = await _channelServiceForJoined.fetchJoined(
-          _joinedChannelIds.toList());
-      _applyJoinedChannels(data);
-    } catch (e) {
-      debugPrint('Joined-channel refresh failed (keeping cache): $e');
-    }
-  }
-
-  void _applyJoinedChannels(List<JoinedChannelData> data) {
-    // Remove previously-joined channels that are no longer joined.
-    _circles.removeWhere((c) => _joinedChannelIds.contains(c.id) &&
-        !data.any((d) => d.id == c.id));
-    for (final ch in data) {
-      final quotes = <Quote>[];
-      for (final q in ch.quotes) {
-        var base = _circleNotifBase[q.id];
-        if (base == null) {
-          base = _nextNotifBase;
-          _nextNotifBase += Quote.maxPerDay + 8;
-          _circleNotifBase[q.id] = base;
-        }
-        quotes.add(Quote(
-          id: q.id,
-          text: q.text,
-          notifBase: base,
-          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-          targetPerDay: q.targetPerDay,
-          windowStartMin: q.windowStartMin,
-          windowEndMin: q.windowEndMin,
-          // Agreed: joining does NOT switch on reminders automatically —
-          // the user opts in per quote (challenges will rely on this).
-          remindersOn: false,
-          isCircle: true,
-          circleId: ch.id,
-        ));
-      }
-      final existing = _circles.where((c) => c.id == ch.id).toList();
-      if (existing.isNotEmpty) {
-        existing.first.quotes
-          ..clear()
-          ..addAll(quotes);
-      } else {
-        _circles.add(Circle(id: ch.id, name: ch.name, quotes: quotes));
-      }
-    }
-    _save();
-    notifyListeners();
-    syncReminders();
-  }
-
-  /// Join entry points. Require sign-in (handled by the caller via the
-  /// sign-in sheet); the server enforces it too.
-  Future<void> joinChannelByCode(String code) async {
-    final joined = await _channelServiceForJoined.joinByCode(code);
-    _joinedChannelIds.add(joined.id);
-    await _saveJoinedIds();
-    await refreshJoinedChannels();
-  }
-
-  Future<void> joinPublicChannel(String channelId) async {
-    await _channelServiceForJoined.join(channelId);
-    _joinedChannelIds.add(channelId);
-    await _saveJoinedIds();
-    await refreshJoinedChannels();
-  }
-
-  Future<void> leaveChannel(String channelId) async {
-    await _channelServiceForJoined.leave(channelId);
-    _joinedChannelIds.remove(channelId);
-    await _saveJoinedIds();
-    await refreshJoinedChannels();
   }
 
   void _restore(Map<String, dynamic> j) {
@@ -261,18 +176,24 @@ class AppState extends ChangeNotifier {
     _circleNotifBase.addAll(cnb.map((k, v) => MapEntry(k, v as int)));
     final lastRead = j['lastReadAt'] as Map<String, dynamic>? ?? {};
     _lastReadAt.addAll(
-    lastRead.map((id, iso) => MapEntry(id, DateTime.parse(iso as String))));
+        lastRead.map((id, iso) => MapEntry(id, DateTime.parse(iso as String))));
   }
+
+  // ---------------------------------------------------------------- backups
+
+  /// The full state as JSON, for the backup service. Public wrapper over
+  /// [_toJson] so the sign-in/restore flow can upload without reaching
+  /// into privates.
+  Map<String, dynamic> snapshotForBackup() => _toJson();
 
   /// Merges a backup payload (from user_backups) into current local state.
   /// Rules:
   /// - reads: per quote per day, take the MAX (reads only accumulate).
-  /// - quotes: union by id; same id → keep the later-updated version is updatedAt 
-  /// on Quote so last edit wins on conflict
-  ///   and remote-only quotes are added. Revisit when Quote gains a stamp.
-  /// - tokens/bestDaily: backup's tokens are authoritative (anti-abuse);
-  ///   bestDaily takes the max.
-  /// - frozenDays, circleNotifBase: union.
+  /// - quotes: union by id; on id conflict the later edit wins
+  ///   (updatedAt; null counts as oldest — covers pre-stamp quotes).
+  /// - tokens: backup is authoritative downward (anti-abuse — a stale
+  ///   backup can never refill tokens); bestDaily takes the max.
+  /// - frozenDays: union.
   /// - evaluatedThrough: take the EARLIER date so missed-day processing
   ///   re-runs over any gap.
   /// Returns true if anything changed (caller saves + notifies).
@@ -293,8 +214,7 @@ class AppState extends ChangeNotifier {
       });
     });
 
-    // Quotes: union by id. On id conflict, the later edit wins
-    // (updatedAt; null counts as oldest — covers pre-stamp quotes).
+    // Quotes: union by id. On id conflict, the later edit wins.
     for (final q in (j['quotes'] as List<dynamic>? ?? [])) {
       final incoming = Quote.fromJson(q as Map<String, dynamic>);
       final local = _quotes.where((l) => l.id == incoming.id).toList();
@@ -303,7 +223,8 @@ class AppState extends ChangeNotifier {
         changed = true;
       } else {
         final l = local.first;
-        final localStamp = l.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final localStamp =
+            l.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
         final remoteStamp =
             incoming.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
         if (remoteStamp.isAfter(localStamp)) {
@@ -318,7 +239,7 @@ class AppState extends ChangeNotifier {
       }
     }
 
-    // Tokens: backup is authoritative (prevents clear-cache token refill).
+    // Tokens: backup is authoritative downward (prevents clear-cache refill).
     final remoteTokens = (j['tokens'] as int?) ?? startingTokens;
     if (remoteTokens < tokens) {
       tokens = remoteTokens;
@@ -333,7 +254,8 @@ class AppState extends ChangeNotifier {
     }
 
     // Frozen days: union.
-    final remoteFrozen = (j['frozenDays'] as List<dynamic>? ?? []).cast<String>();
+    final remoteFrozen =
+        (j['frozenDays'] as List<dynamic>? ?? []).cast<String>();
     final before = _frozenDays.length;
     _frozenDays.addAll(remoteFrozen);
     if (_frozenDays.length != before) changed = true;
@@ -341,18 +263,14 @@ class AppState extends ChangeNotifier {
     // evaluatedThrough: earlier date wins (re-process any gap).
     final remoteEval = j['evaluatedThrough'] as String?;
     if (remoteEval != null &&
-        (_evaluatedThrough == null || remoteEval.compareTo(_evaluatedThrough!) < 0)) {
+        (_evaluatedThrough == null ||
+            remoteEval.compareTo(_evaluatedThrough!) < 0)) {
       _evaluatedThrough = remoteEval;
       changed = true;
     }
 
     return changed;
   }
-
-  /// The full state as JSON, for the backup service. Public wrapper over
-  /// [_toJson] so the sign-in/restore flow can upload without reaching
-  /// into privates.
-  Map<String, dynamic> snapshotForBackup() => _toJson();
 
   Map<String, dynamic> _toJson() => {
         'version': 1,
@@ -364,7 +282,8 @@ class AppState extends ChangeNotifier {
         'evaluatedThrough': _evaluatedThrough,
         'nextNotifBase': _nextNotifBase,
         'circleNotifBase': _circleNotifBase,
-        'lastReadAt': _lastReadAt.map((id, time) => MapEntry(id, time.toIso8601String())),
+        'lastReadAt':
+            _lastReadAt.map((id, time) => MapEntry(id, time.toIso8601String())),
       };
 
   Future<void> _save() {
@@ -377,7 +296,7 @@ class AppState extends ChangeNotifier {
 
   List<Quote> get quotes => List.unmodifiable(_quotes);
   List<Circle> get circles => List.unmodifiable(_circles);
-  
+
   List<FeaturedQuote> get featuredQuotes =>
       List.unmodifiable(_featuredQuotes);
 
@@ -397,7 +316,9 @@ class AppState extends ChangeNotifier {
 
   Circle? circleById(String id) {
     for (final c in _circles) {
-      if (c.id == id) return c;
+      if (c.id == id) {
+        return c;
+      }
     }
     return null;
   }
@@ -453,7 +374,7 @@ class AppState extends ChangeNotifier {
     q.windowStartMin = windowStartMin;
     q.windowEndMin = windowEndMin;
     q.remindersOn = remindersOn;
-    q.updatedAt = clock();
+    q.updatedAt = clock(); // drives last-edit-wins backup merge
     await _save();
     notifyListeners();
     await syncReminders();
@@ -475,7 +396,122 @@ class AppState extends ChangeNotifier {
   Future<void> syncReminders() =>
       reminders.syncAll([..._quotes, ...circleQuotes]);
 
-  // ---------------------------------------------------------------- circles
+  // -------------------------------------------------- joined channels feed
+
+  void _loadJoinedIds() {
+    _joinedChannelIds
+      ..clear()
+      ..addAll(_prefs.getStringList(_joinedKey) ?? const []);
+  }
+
+  Future<void> _saveJoinedIds() =>
+      _prefs.setStringList(_joinedKey, _joinedChannelIds.toList());
+
+  /// Fetches all joined channels from Supabase and merges them into the
+  /// feed alongside any static-JSON circles. When signed in, the SERVER's
+  /// membership list is merged in first — so a cleared cache or new
+  /// device recovers the feed automatically.
+  Future<void> refreshJoinedChannels() async {
+    if (isSignedIn) {
+      try {
+        final serverIds =
+            await _channelServiceForJoined.fetchMyMembershipIds();
+        final before = _joinedChannelIds.length;
+        _joinedChannelIds.addAll(serverIds);
+        if (_joinedChannelIds.length != before) await _saveJoinedIds();
+      } catch (e) {
+        debugPrint('Membership sync failed (using local list): $e');
+      }
+    }
+    if (_joinedChannelIds.isEmpty) return;
+    try {
+      final data = await _channelServiceForJoined
+          .fetchJoined(_joinedChannelIds.toList());
+      _applyJoinedChannels(data);
+    } catch (e) {
+      debugPrint('Joined-channel refresh failed (keeping cache): $e');
+    }
+  }
+
+  void _applyJoinedChannels(List<JoinedChannelData> data) {
+    // Remove previously-joined channels that are no longer joined.
+    _circles.removeWhere((c) =>
+        _joinedChannelIds.contains(c.id) &&
+        !data.any((d) => d.id == c.id));
+    for (final ch in data) {
+      final quotes = <Quote>[];
+      for (final q in ch.quotes) {
+        var base = _circleNotifBase[q.id];
+        if (base == null) {
+          base = _nextNotifBase;
+          _nextNotifBase += Quote.maxPerDay + 8;
+          _circleNotifBase[q.id] = base;
+        }
+        quotes.add(Quote(
+          id: q.id,
+          text: q.text,
+          notifBase: base,
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+          targetPerDay: q.targetPerDay,
+          windowStartMin: q.windowStartMin,
+          windowEndMin: q.windowEndMin,
+          // Agreed: joining does NOT switch on reminders automatically —
+          // the user opts in per quote (challenges will rely on this).
+          remindersOn: false,
+          isCircle: true,
+          circleId: ch.id,
+        ));
+      }
+      final existing = _circles.where((c) => c.id == ch.id).toList();
+      if (existing.isNotEmpty) {
+        existing.first.quotes
+          ..clear()
+          ..addAll(quotes);
+      } else {
+        _circles.add(Circle(id: ch.id, name: ch.name, quotes: quotes));
+      }
+    }
+    _save();
+    notifyListeners();
+    syncReminders();
+  }
+
+  // ------------------------------------------------------- join / leave / create
+
+  /// Joins a private channel by its 6-character code. Requires sign-in
+  /// (the caller shows the sign-in sheet first; the server enforces it too).
+  Future<void> joinChannelByCode(String code) async {
+    final joined = await _channelServiceForJoined.joinByCode(code);
+    _joinedChannelIds.add(joined.id);
+    await _saveJoinedIds();
+    await refreshJoinedChannels();
+  }
+
+  /// Joins a public channel from the preview screen. Requires sign-in.
+  Future<void> joinPublicChannel(String channelId) async {
+    await _channelServiceForJoined.join(channelId);
+    _joinedChannelIds.add(channelId);
+    await _saveJoinedIds();
+    await refreshJoinedChannels();
+  }
+
+  /// Leaves a channel (owners are refused server-side).
+  Future<void> leaveChannel(String channelId) async {
+    await _channelServiceForJoined.leave(channelId);
+    _joinedChannelIds.remove(channelId);
+    await _saveJoinedIds();
+    await refreshJoinedChannels();
+  }
+
+  /// Called right after create_channel succeeds: the server already made
+  /// the creator an owner-member; we track it locally and pull the feed.
+  Future<void> joinCreatedChannel(String channelId) async {
+    _joinedChannelIds.add(channelId);
+    await _saveJoinedIds();
+    await refreshJoinedChannels();
+  }
+
+  // --------------------------------------------------------- static circles
 
   /// Fetches the latest circle content and applies it if the fetch succeeds.
   /// Safe to call repeatedly (e.g. a manual refresh button later).
@@ -658,7 +694,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     await _prefs.setString(_themeKey, mode.name);
   }
-  
+
   int quoteStreak(String quoteId) =>
       _streak((key) => readsOnDay(quoteId, key) > 0);
 

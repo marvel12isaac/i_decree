@@ -183,6 +183,45 @@ class ChannelService {
     return rows.map((r) => r['channel_id'] as String).toList();
   }
 
+  // ------------------------------------------------------------ creating
+
+  /// Creates a channel. Returns its id and (for private channels) the
+  /// join code. The creator becomes owner-member server-side.
+  Future<CreatedChannel> create({
+    required String name,
+    required String description,
+    required bool isPublic,
+  }) async {
+    final res = await _client.rpc('create_channel', params: {
+      'p_name': name.trim(),
+      'p_description': description.trim(),
+      'p_public': isPublic,
+    });
+    final r = res as Map<String, dynamic>;
+    return CreatedChannel(
+      id: r['id'] as String,
+      name: r['name'] as String,
+      joinCode: r['join_code'] as String?,
+    );
+  }
+
+  /// Replaces all of a channel's decrees with the given list (used by the
+  /// editor's save). Simple and correct for v1's 33-decree scale.
+  Future<void> replaceDecrees(
+      String channelId, List<EditorDecree> decrees) async {
+    await _client.from('channel_quotes').delete().eq('channel_id', channelId);
+    if (decrees.isEmpty) return;
+    await _client.from('channel_quotes').insert([
+      for (var i = 0; i < decrees.length; i++)
+        {
+          'channel_id': channelId,
+          'text': decrees[i].text,
+          'target_per_day': decrees[i].targetPerDay,
+          'position': i,
+        }
+    ]);
+  }  
+
   /// Full data for every joined channel: name + decrees. Used by AppState
   /// to build the feed.
   Future<List<JoinedChannelData>> fetchJoined(List<String> channelIds) async {
@@ -244,4 +283,23 @@ class ChannelDetail {
 
   final ChannelSummary summary;
   final List<ChannelDecreePreview> decrees;
+}
+
+/// The result of creating a channel.
+class CreatedChannel {
+  CreatedChannel({required this.id, required this.name, this.joinCode});
+
+  final String id;
+  final String name;
+
+  /// Null for public channels.
+  final String? joinCode;
+}
+
+/// A decree being drafted in the editor.
+class EditorDecree {
+  EditorDecree({required this.text, this.targetPerDay = 1});
+
+  String text;
+  int targetPerDay;
 }
