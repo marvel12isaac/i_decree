@@ -7,6 +7,10 @@ import '../theme.dart';
 ///
 /// While [unlocked] is false it shows [lockedLabel] and ignores presses.
 /// Screen readers can trigger completion with the standard long-press action.
+///
+/// All colors come from AppColors, so the button renders correctly in both
+/// light and dark mode: the outline and fill use the theme's text color and
+/// the label over the fill uses the theme's background color.
 class HoldToReadButton extends StatefulWidget {
   const HoldToReadButton({
     super.key,
@@ -67,6 +71,7 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
   @override
   Widget build(BuildContext context) {
     final unlocked = widget.unlocked;
+    final c = AppColors.of(context);
 
     return Semantics(
       button: true,
@@ -93,7 +98,13 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
                 child: Container(
                   height: 60,
                   width: double.infinity,
-                  color: unlocked ? Palette.paleDeep : Palette.line,
+                  decoration: BoxDecoration(
+                    color: c.surface,
+                    border: Border.all(
+                      color: unlocked ? c.text : c.line,
+                      width: unlocked ? 2 : 1,
+                    ),
+                  ),
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
@@ -102,15 +113,15 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
                         child: FractionallySizedBox(
                           widthFactor: progress,
                           heightFactor: 1,
-                          child: const ColoredBox(color: Palette.deep),
+                          child: ColoredBox(color: c.text),
                         ),
                       ),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           if (!unlocked) ...[
-                            const Icon(Icons.lock_outline,
-                                size: 18, color: Palette.muted),
+                            Icon(Icons.lock_outline,
+                                size: 18, color: c.muted),
                             const SizedBox(width: 8),
                           ],
                           Text(
@@ -119,10 +130,10 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
                               color: !unlocked
-                                  ? Palette.muted
+                                  ? c.muted
                                   : progress > 0.55
-                                      ? Colors.white
-                                      : Palette.deep,
+                                      ? c.background
+                                      : c.text,
                             ),
                           ),
                         ],

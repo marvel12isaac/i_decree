@@ -3,14 +3,18 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_state.dart';
+import '../models.dart';
 // import '../services/auth_service.dart';
-// import '../services/backup_service.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
 import '../widgets/sign_in_sheet.dart';
+import 'quote_editor_screen.dart';
 
 /// Wireframe 5: create a channel (name, description, public/private,
 /// decree drafts) then wireframe 6: the share-code dialog.
+///
+/// Decree entries open the real QuoteEditorScreen in draft mode, so they
+/// look and behave exactly like the personal decree editor.
 class ChannelEditorScreen extends StatefulWidget {
   const ChannelEditorScreen({super.key});
 
@@ -22,7 +26,7 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
   final _name = TextEditingController();
   final _description = TextEditingController();
   bool _isPublic = false; // agreed default: private, join with code
-  final List<EditorDecree> _decrees = [];
+  final List<DecreeDraft> _decrees = [];
   bool _saving = false;
 
   @override
@@ -35,45 +39,30 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
   bool get _canSave => _name.text.trim().isNotEmpty && !_saving;
 
   Future<void> _addDecree() async {
-    final text = await _decreeDialog(null);
-    if (text == null || !mounted) return;
-    setState(() => _decrees.add(EditorDecree(text: text)));
+    final draft = await Navigator.of(context).push<DecreeDraft>(
+      MaterialPageRoute(builder: (_) => const QuoteEditorScreen.draft()),
+    );
+    if (draft == null || !mounted) return;
+    setState(() => _decrees.add(draft));
   }
 
   Future<void> _editDecree(int index) async {
-    final text = await _decreeDialog(_decrees[index].text);
-    if (text == null || !mounted) return;
-    setState(() => _decrees[index].text = text);
-  }
-
-  Future<String?> _decreeDialog(String? existing) {
-    final controller = TextEditingController(text: existing ?? '');
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(existing == null ? 'New decree' : 'Edit decree'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLines: 4,
-          maxLength: 1000,
-          decoration: const InputDecoration(
-            hintText: 'Title on the first line, body under it.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(context).pop(controller.text.trim()),
-            child: const Text('Done'),
-          ),
-        ],
-      ),
+    final existing = _decrees[index];
+    final seed = Quote(
+      id: 'draft-$index',
+      text: existing.text,
+      notifBase: 0,
+      createdAt: DateTime.now(),
+      targetPerDay: existing.targetPerDay,
+      windowStartMin: existing.windowStartMin,
+      windowEndMin: existing.windowEndMin,
+      remindersOn: false,
     );
+    final draft = await Navigator.of(context).push<DecreeDraft>(
+      MaterialPageRoute(builder: (_) => QuoteEditorScreen.draft(seed: seed)),
+    );
+    if (draft == null || !mounted) return;
+    setState(() => _decrees[index] = draft);
   }
 
   Future<void> _save() async {
@@ -94,9 +83,16 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
         description: _description.text.trim(),
         isPublic: _isPublic,
       );
-      await service.replaceDecrees(created.id, _decrees);
+      await service.replaceDecrees(created.id, [
+        for (final d in _decrees)
+          EditorDecree(
+            text: d.text,
+            targetPerDay: d.targetPerDay,
+          ),
+      ]);
 
-      // Owner auto-joins: track it locally and refresh the feed.
+      // Owner auto-joins: track it locally and pull the feed before we
+      // land on Home.
       await state.joinCreatedChannel(created.id);
 
       if (!mounted) return;
@@ -109,12 +105,12 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
         ),
       );
       if (!mounted) return;
-      Navigator.of(context)
-          .popUntil((r) => r.isFirst); // Home; feed now shows it
+      Navigator.of(context).popUntil((r) => r.isFirst); // Home
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not create the channel. Try again.')),
+        const SnackBar(
+            content: Text('Could not create the channel. Try again.')),
       );
       setState(() => _saving = false);
     }
@@ -214,8 +210,7 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.close),
-                      onPressed: () =>
-                          setState(() => _decrees.removeAt(i)),
+                      onPressed: () => setState(() => _decrees.removeAt(i)),
                     ),
                   ],
                 ),
@@ -279,7 +274,8 @@ class _ShareCodeDialog extends StatelessWidget {
             Text('Join code', style: TextStyle(color: c.muted, fontSize: 12)),
             const SizedBox(height: 8),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 border: Border.all(color: c.muted, width: 1.5),
                 borderRadius: BorderRadius.circular(12),
@@ -297,7 +293,7 @@ class _ShareCodeDialog extends StatelessWidget {
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: code));
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Code copied')));
+                          const SnackBar(content: Text('Code copied')));
                     },
                   ),
                 ],

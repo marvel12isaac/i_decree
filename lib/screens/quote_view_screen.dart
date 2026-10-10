@@ -3,18 +3,51 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../models.dart';
 import '../widgets/hold_to_read_button.dart';
 import '../widgets/quote_text.dart';
+import '../widgets/sign_in_sheet.dart';
 import 'quote_editor_screen.dart';
 
 /// Shows one quote. The Read button unlocks after a short fixed delay and,
 /// for quotes long enough to scroll, only once the user reaches the end.
-/// The delay timer runs quietly in the background; it only stops people from
-/// tapping straight through.
+///
+/// Preview mode ([QuoteViewScreen.preview]): opened from a channel search
+/// result by a non-member. The quote is fully readable, but the two
+/// actions that need membership — decreeing and adding to My Decrees —
+/// trigger the join flow first (sign-in sheet if needed), then the action
+/// completes. After a preview decree, the screen replaces itself with the
+/// real, live quote from the joined channel.
 class QuoteViewScreen extends StatefulWidget {
-  const QuoteViewScreen({super.key, required this.quoteId});
+  const QuoteViewScreen({super.key, required this.quoteId})
+      : previewText = null,
+        previewTarget = 1,
+        previewChannelId = null,
+        previewChannelName = null,
+        previewJoinCode = null;
 
-  final String quoteId;
+  /// Preview of a channel decree the user hasn't joined yet.
+  const QuoteViewScreen.preview({
+    super.key,
+    required String quoteText,
+    required int targetPerDay,
+    required String channelId,
+    required String channelName,
+    String? joinCode,
+  })  : quoteId = null,
+        previewText = quoteText,
+        previewTarget = targetPerDay,
+        previewChannelId = channelId,
+        previewChannelName = channelName,
+        previewJoinCode = joinCode;
+
+  final String? quoteId;
+
+  final String? previewText;
+  final int previewTarget;
+  final String? previewChannelId;
+  final String? previewChannelName;
+  final String? previewJoinCode;
 
   @override
   State<QuoteViewScreen> createState() => _QuoteViewScreenState();
@@ -27,6 +60,27 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
   Timer? _delayTimer;
   bool _delayDone = false;
   bool _atEnd = false;
+  bool _joinBusy = false;
+
+  bool get _previewMode => widget.previewText != null;
+
+  /// The quote this screen shows: the real one, or a synthetic preview
+  /// quote built from the passed-in content.
+  Quote? _resolveQuote(AppState state) {
+    if (_previewMode) {
+      return Quote(
+        id: 'preview',
+        text: widget.previewText!,
+        notifBase: 0,
+        createdAt: DateTime.now(),
+        targetPerDay: widget.previewTarget,
+        remindersOn: false,
+        isCircle: true,
+        circleId: widget.previewChannelId,
+      );
+    }
+    return state.quoteById(widget.quoteId!);
+  }
 
   @override
   void initState() {
@@ -54,22 +108,100 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     }
   }
 
+  // ------------------------------------------------------------ join gate
+
+  /// Makes sure the user is a member of the preview channel, running the
+  /// sign-in sheet and join flow as needed. Returns true when membership
+  /// is confirmed.
+  Future<bool> _ensureMember(AppState state) async {
+    final channelId = widget.previewChannelId!;
+    if (state.isMemberOf(channelId)) return true;
+
+    if (!state.isSignedIn) {
+      final ok = await showSignInSheet(context, state);
+      if (!ok || !mounted) return false;
+    }
+
+    setState(() => _joinBusy = true);
+    try {
+      final code = widget.previewJoinCode;
+      if (code != null) {
+        await state.joinChannelByCode(code);
+      } else {
+        await state.joinPublicChannel(channelId);
+      }
+      return true;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not join. Try again.')),
+        );
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => _joinBusy = false);
+    }
+  }
+
+  // -------------------------------------------------------------- actions
+
   Future<void> _complete() async {
     final state = AppScope.of(context);
-    final quote = state.quoteById(widget.quoteId);
+
+    if (_previewMode) {
+      final joined = await _ensureMember(state);
+      if (!joined || !mounted) return;
+
+      // The joined channel's feed now holds the real quote; find it by
+      // text and decree THAT, so the read counts server-side too.
+      final channel = state.circleById(widget.previewChannelId!);
+      Quote? real;
+      if (channel != null) {
+        for (final q in channel.quotes) {
+          if (q.text.trim() == widget.previewText!.trim()) {
+            real = q;
+            break;
+          }
+        }
+      }
+      if (real == null) {
+        // Feed not populated yet — fall back to just closing the preview.
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+      // Capture in a final so type promotion survives the closure below.
+      final live = real;
+
+      await state.registerRead(live.id);
+      if (!mounted) return;
+      final today = state.readsTodayFor(live.id);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text('Decreed. $today of ${live.targetPerDay} today.')),
+      );
+      // Swap this preview for the live quote view.
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => QuoteViewScreen(quoteId: live.id)),
+      );
+      return;
+    }
+
+    final quote = state.quoteById(widget.quoteId!);
     if (quote == null) return;
     await state.registerRead(quote.id);
     if (!mounted) return;
     final today = state.readsTodayFor(quote.id);
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
-      SnackBar(content: Text('Decreed. $today of ${quote.targetPerDay} today.')),
+      SnackBar(
+          content: Text('Decreed. $today of ${quote.targetPerDay} today.')),
     );
     if (Navigator.of(context).canPop()) Navigator.of(context).pop();
   }
 
   Future<void> _edit() async {
-    final quote = AppScope.of(context).quoteById(widget.quoteId);
+    final quote = AppScope.of(context).quoteById(widget.quoteId!);
     if (quote == null) return;
     final deleted = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => QuoteEditorScreen(quote: quote)),
@@ -77,16 +209,32 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     if (deleted == true && mounted) Navigator.of(context).pop();
   }
 
-  /// Opens the editor pre-filled from a circle decree, so the user can
-  /// adjust it before it's saved as a new personal decree. Nothing is
-  /// copied until they hit Save there. If a personal decree with the exact
-  /// same text already exists, this just says so instead.
-  void _addToMyDecrees() {
+  /// Opens the editor pre-filled, so the user can adjust it before it's
+  /// saved as a new personal decree. In preview mode, membership is
+  /// required first — the join flow runs, then the editor opens.
+  Future<void> _addToMyDecrees() async {
     final state = AppScope.of(context);
-    final quote = state.quoteById(widget.quoteId);
+    var quote = _resolveQuote(state);
     if (quote == null) return;
+
+    if (_previewMode) {
+      final joined = await _ensureMember(state);
+      if (!joined || !mounted) return;
+      // Prefer the real quote now that we're a member.
+      final channel = state.circleById(widget.previewChannelId!);
+      if (channel != null) {
+        for (final q in channel.quotes) {
+          if (q.text.trim() == widget.previewText!.trim()) {
+            quote = q;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!mounted) return;
     final alreadyAdded =
-        state.quotes.any((q) => q.text.trim() == quote.text.trim());
+        state.quotes.any((q) => q.text.trim() == quote!.text.trim());
     if (alreadyAdded) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Already added to My Decrees.')),
@@ -98,10 +246,12 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     );
   }
 
+  // ---------------------------------------------------------------- build
+
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final quote = state.quoteById(widget.quoteId);
+    final quote = _resolveQuote(state);
     if (quote == null) {
       return const Scaffold(body: SizedBox.shrink());
     }
@@ -127,8 +277,13 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
           if (quote.isCircle)
             IconButton(
               tooltip: 'Add to My Decrees',
-              icon: const Icon(Icons.playlist_add),
-              onPressed: _addToMyDecrees,
+              icon: _joinBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.playlist_add),
+              onPressed: _joinBusy ? null : _addToMyDecrees,
             ),
         ],
       ),

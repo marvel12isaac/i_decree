@@ -191,12 +191,18 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       // screen switches itself into member mode.
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not join. Try again.')),
-      );
+      _showCouldNotJoin();
     } finally {
       if (mounted) setState(() => _joining = false);
     }
+  }
+
+  /// Extracted so the SnackBar uses the State's context directly after a
+  /// mounted check — satisfies use_build_context_synchronously.
+  void _showCouldNotJoin() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not join. Try again.')),
+    );
   }
 
   // ----------------------------------------------------------------- body
@@ -291,37 +297,24 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     AppState state,
     ChannelDecreePreview d,
   ) {
-    final c = AppColors.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: QuoteTitleBody(text: d.text),
+    return InkWell(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => QuoteViewScreen.preview(
+            quoteText: d.text,
+            targetPerDay: d.targetPerDay,
+            channelId: widget.circleId,
+            channelName: widget.channelName ?? 'Channel',
+            joinCode: widget.joinCode,
           ),
-          IconButton(
-            tooltip: 'Add to My Decrees',
-            icon: Icon(Icons.playlist_add, color: c.text),
-            onPressed: () async {
-              await state.addQuote(
-                text: d.text,
-                targetPerDay: d.targetPerDay,
-                windowStartMin: 8 * 60,
-                windowEndMin: 20 * 60,
-                remindersOn: true,
-              );
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Added to My Decrees')),
-              );
-            },
-          ),
-        ],
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+        child: QuoteTitleBody(text: d.text),
       ),
     );
   }
-
   // ------------------------------------------------------------ utilities
 
   /// "0 members", "1 member", "2 members" — 0 takes the plural.
