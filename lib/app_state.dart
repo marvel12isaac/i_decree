@@ -4,12 +4,15 @@ import 'dart:convert';
 import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 
 import 'models.dart';
 import 'services/circle_service.dart';
 import 'services/reminder_service.dart';
 import 'services/featured_quote_service.dart';
 import 'services/backup_service.dart';
+import 'services/channel_service.dart';
 
 enum DueKind { overdue, upcoming, lastRead, none }
 
@@ -60,7 +63,13 @@ class AppState extends ChangeNotifier {
   final ReminderService reminders;
   final CircleService circleService;
   final FeaturedQuoteService featuredQuoteService;
+    // Created lazily; the Supabase client is initialized in main() before
+  // AppState.load runs.
+  late final _channelServiceForJoined =
+      ChannelService(Supabase.instance.client);
   BackupService? backups; // null until the user signs in
+    bool get isSignedIn => Supabase.instance.client.auth.currentUser != null;
+
   /// Overridable clock, so streak logic can be tested.
   DateTime Function() clock = DateTime.now;
 
@@ -90,6 +99,10 @@ class AppState extends ChangeNotifier {
   int bestDaily = 0;
   String? _evaluatedThrough; // last past day already checked for a miss
   int _nextNotifBase = 0;
+  // IDs of Supabase channels the user has joined, persisted so the feed
+  // survives restarts. "Circles" from the static JSON remain separate.
+  final Set<String> _joinedChannelIds = {};
+  static const String _joinedKey = 'joined_channels_v1';
 
   // ---------------------------------------------------------------- loading
 
@@ -114,7 +127,9 @@ class AppState extends ChangeNotifier {
     final cached = circleService.loadCached();
     if (cached != null) state._applyCircleData(cached, persist: false);
     unawaited(state.refreshCircle());
-    
+        state._loadJoinedIds();
+    unawaited(state.refreshJoinedChannels());
+
     // Same idea for the featured-quotes card: show the cached set right
     // away, then refresh it in the background.
     final cachedFeatured = featuredQuoteService.loadCached();
@@ -126,6 +141,93 @@ class AppState extends ChangeNotifier {
     unawaited(state.refreshFeaturedQuotes());
 
     return state;
+  }
+
+  void _loadJoinedIds() {
+    _joinedChannelIds
+      ..clear()
+      ..addAll(_prefs.getStringList(_joinedKey) ?? const []);
+  }
+
+  Future<void> _saveJoinedIds() =>
+      _prefs.setStringList(_joinedKey, _joinedChannelIds.toList());
+
+  /// Fetches all joined channels from Supabase and merges them into the
+  /// feed alongside any static-JSON circles.
+  Future<void> refreshJoinedChannels() async {
+    if (_joinedChannelIds.isEmpty) return;
+    try {
+      final data = await _channelServiceForJoined.fetchJoined(
+          _joinedChannelIds.toList());
+      _applyJoinedChannels(data);
+    } catch (e) {
+      debugPrint('Joined-channel refresh failed (keeping cache): $e');
+    }
+  }
+
+  void _applyJoinedChannels(List<JoinedChannelData> data) {
+    // Remove previously-joined channels that are no longer joined.
+    _circles.removeWhere((c) => _joinedChannelIds.contains(c.id) &&
+        !data.any((d) => d.id == c.id));
+    for (final ch in data) {
+      final quotes = <Quote>[];
+      for (final q in ch.quotes) {
+        var base = _circleNotifBase[q.id];
+        if (base == null) {
+          base = _nextNotifBase;
+          _nextNotifBase += Quote.maxPerDay + 8;
+          _circleNotifBase[q.id] = base;
+        }
+        quotes.add(Quote(
+          id: q.id,
+          text: q.text,
+          notifBase: base,
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+          targetPerDay: q.targetPerDay,
+          windowStartMin: q.windowStartMin,
+          windowEndMin: q.windowEndMin,
+          // Agreed: joining does NOT switch on reminders automatically —
+          // the user opts in per quote (challenges will rely on this).
+          remindersOn: false,
+          isCircle: true,
+          circleId: ch.id,
+        ));
+      }
+      final existing = _circles.where((c) => c.id == ch.id).toList();
+      if (existing.isNotEmpty) {
+        existing.first.quotes
+          ..clear()
+          ..addAll(quotes);
+      } else {
+        _circles.add(Circle(id: ch.id, name: ch.name, quotes: quotes));
+      }
+    }
+    _save();
+    notifyListeners();
+    syncReminders();
+  }
+
+  /// Join entry points. Require sign-in (handled by the caller via the
+  /// sign-in sheet); the server enforces it too.
+  Future<void> joinChannelByCode(String code) async {
+    final joined = await _channelServiceForJoined.joinByCode(code);
+    _joinedChannelIds.add(joined.id);
+    await _saveJoinedIds();
+    await refreshJoinedChannels();
+  }
+
+  Future<void> joinPublicChannel(String channelId) async {
+    await _channelServiceForJoined.join(channelId);
+    _joinedChannelIds.add(channelId);
+    await _saveJoinedIds();
+    await refreshJoinedChannels();
+  }
+
+  Future<void> leaveChannel(String channelId) async {
+    await _channelServiceForJoined.leave(channelId);
+    _joinedChannelIds.remove(channelId);
+    await _saveJoinedIds();
+    await refreshJoinedChannels();
   }
 
   void _restore(Map<String, dynamic> j) {

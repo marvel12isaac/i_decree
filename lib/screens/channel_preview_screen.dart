@@ -2,14 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
+import '../app_state.dart';
+import '../widgets/sign_in_sheet.dart';
+
 
 /// Wireframe 3: a read-only preview of a channel the user has NOT joined.
 /// Shows the decrees with a Join banner. Joining itself is built in the
 /// next step — the button explains that for now.
 class ChannelPreviewScreen extends StatefulWidget {
-  const ChannelPreviewScreen({super.key, required this.channel});
+  const ChannelPreviewScreen({super.key, required this.channel, this.preloaded});
 
   final ChannelSummary channel;
+
+  /// Already-fetched decrees (code-match path). Null → fetch normally.
+  final List<ChannelDecreePreview>? preloaded;
 
   @override
   State<ChannelPreviewScreen> createState() => _ChannelPreviewScreenState();
@@ -24,7 +30,11 @@ class _ChannelPreviewScreenState extends State<ChannelPreviewScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    if (widget.preloaded != null) {
+      _decrees = widget.preloaded;
+    } else {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -137,11 +147,24 @@ class _ChannelPreviewScreenState extends State<ChannelPreviewScreen> {
     );
   }
 
-  void _onJoinPressed() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Joining channels arrives in the next update.'),
-      ),
-    );
+  Future<void> _onJoinPressed() async {
+    final state = AppScope.of(context);
+    if (!state.isSignedIn) {
+      final ok = await showSignInSheet(context, state);
+      if (!ok || !mounted) return;
+    }
+    try {
+      await state.joinPublicChannel(widget.channel.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Joined ${widget.channel.name}!')),
+      );
+      Navigator.of(context).pop(); // back Home, where it now appears
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not join. Try again.')),
+      );
+    }
   }
 }

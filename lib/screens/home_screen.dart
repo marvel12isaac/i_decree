@@ -38,7 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _channelDebounce;
   int _channelRequestId = 0; // guards against out-of-order responses
   List<ChannelSummary> _channelResults = [];
-  ChannelSummary? _codeMatch;
+  ChannelDetail? _codeMatch;
   bool _channelSearchLoading = false;
 
   @override
@@ -74,6 +74,8 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       if (ChannelService.looksLikeCode(query)) {
         final match = await _channelService.findByCode(query);
+        // findByCode now returns ChannelDetail (with decrees included).
+
         if (!mounted || id != _channelRequestId) return;
         setState(() {
           _codeMatch = match;
@@ -236,7 +238,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       return [
         const _SectionLabel('Channels'),
-        _channelResultRow(context, c, match, joined: false),
+        _channelResultRow(context, c, match.summary, joined: false,
+            detail: match),
       ];
     }
 
@@ -313,11 +316,13 @@ class _HomeScreenState extends State<HomeScreen> {
     AppColors c,
     ChannelSummary ch, {
     required bool joined,
+    ChannelDetail? detail,
   }) {
     return InkWell(
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => ChannelPreviewScreen(channel: ch),
+                    builder: (_) => ChannelPreviewScreen(
+              channel: ch, preloaded: detail?.decrees),
         ),
       ),
       child: Padding(
@@ -358,7 +363,8 @@ class _HomeScreenState extends State<HomeScreen> {
             OutlinedButton(
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => ChannelPreviewScreen(channel: ch),
+                  builder: (_) => ChannelPreviewScreen(
+                    channel: ch, preloaded: detail?.decrees),
                 ),
               ),
               child: const Text('Open'),
