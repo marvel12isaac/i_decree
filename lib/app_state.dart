@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter/widgets.dart';
@@ -93,6 +94,16 @@ class AppState extends ChangeNotifier {
   final Map<String, int> _circleNotifBase = {};
   final List<FeaturedQuote> _featuredQuotes = [];
 
+  // Which featured quote is showing. ONE shared index and ONE timer, so the
+  // Home card and the My Decrees card always show the same quote.
+  final ValueNotifier<int> featuredIndex = ValueNotifier<int>(0);
+  final Random _featuredRandom = Random();
+  Timer? _featuredTimer;
+  static const Duration _featuredRotateEvery = Duration(minutes: 2);
+
+  // When channels were last refreshed because the app came to the front.
+  DateTime? _lastResumeRefresh;
+
   // quoteId -> (yyyy-MM-dd -> number of reads that day)
   final Map<String, Map<String, int>> _reads = {};
   final Set<String> _frozenDays = {};
@@ -105,6 +116,9 @@ class AppState extends ChangeNotifier {
   // survives restarts. "Circles" from the static JSON remain separate.
   final Set<String> _joinedChannelIds = {};
   static const String _joinedKey = 'joined_channels_v1';
+  // The joined channels' names and decrees, so the feed shows instantly
+  // (even offline) while the network refresh runs.
+  static const String _joinedCacheKey = 'joined_channel_data_v1';
 
   ThemeMode themeMode = ThemeMode.light;
   int tokens = startingTokens;
@@ -117,6 +131,9 @@ class AppState extends ChangeNotifier {
   bool get isSignedIn => Supabase.instance.client.auth.currentUser != null;
 
   bool isMemberOf(String channelId) => _joinedChannelIds.contains(channelId);
+
+  /// True when this device knows of at least one joined channel.
+  bool get hasJoinedChannels => _joinedChannelIds.isNotEmpty;
 
   // ---------------------------------------------------------------- loading
 
@@ -153,11 +170,19 @@ class AppState extends ChangeNotifier {
         ..addAll(cachedFeatured);
     }
     unawaited(state.refreshFeaturedQuotes());
+    state._startFeaturedRotation();
 
-    // Joined Supabase channels: load the persisted ID list, then refresh
-    // from the server (which also re-syncs memberships when signed in).
+    // Joined Supabase channels: load the persisted ID list and the cached
+    // channel content (so the feed shows right away, even offline), then
+    // refresh from the server in the background.
     state._loadJoinedIds();
-    unawaited(state.refreshJoinedChannels());
+    state._loadJoinedCache();
+    // Signed in: restore everything tied to the account (personal backup,
+    // memberships, channel content) and keep backups uploading. Signed
+    // out: just refresh any channels joined on this device.
+    unawaited(state.isSignedIn
+        ? state.restoreAccountData()
+        : state.refreshJoinedChannels());
 
     return state;
   }
@@ -304,6 +329,11 @@ class AppState extends ChangeNotifier {
   List<FeaturedQuote> get featuredQuotes =>
       List.unmodifiable(_featuredQuotes);
 
+  /// The featured quote at [index] (wraps around), or null if none loaded.
+  FeaturedQuote? featuredQuoteAt(int index) => _featuredQuotes.isEmpty
+      ? null
+      : _featuredQuotes[index % _featuredQuotes.length];
+
   Future<void> refreshFeaturedQuotes() async {
     final data = await featuredQuoteService.refresh();
     if (data != null) {
@@ -411,6 +441,67 @@ class AppState extends ChangeNotifier {
   Future<void> _saveJoinedIds() =>
       _prefs.setStringList(_joinedKey, _joinedChannelIds.toList());
 
+  /// Saves the joined channels' names and decrees for instant, offline
+  /// startup. Only channels still in the joined list are kept.
+  Future<void> _saveJoinedCache() {
+    final data = [
+      for (final c in _circles)
+        if (_joinedChannelIds.contains(c.id))
+          {
+            'id': c.id,
+            'name': c.name,
+            'quotes': [
+              for (final q in c.quotes)
+                {
+                  'id': q.id,
+                  'text': q.text,
+                  'targetPerDay': q.targetPerDay,
+                  'windowStartMin': q.windowStartMin,
+                  'windowEndMin': q.windowEndMin,
+                },
+            ],
+          },
+    ];
+    return _prefs.setString(_joinedCacheKey, jsonEncode(data));
+  }
+
+  /// Applies the saved channel content, if any, before the network refresh.
+  void _loadJoinedCache() {
+    final raw = _prefs.getString(_joinedCacheKey);
+    if (raw == null) return;
+    try {
+      final list = jsonDecode(raw) as List<dynamic>;
+      final data = <JoinedChannelData>[];
+      for (final item in list) {
+        final m = item as Map<String, dynamic>;
+        final id = m['id'] as String;
+        if (!_joinedChannelIds.contains(id)) continue; // left since caching
+        final rawQuotes = m['quotes'] as List<dynamic>? ?? const [];
+        final quotes = <JoinedQuoteData>[];
+        for (var i = 0; i < rawQuotes.length; i++) {
+          final q = rawQuotes[i] as Map<String, dynamic>;
+          quotes.add(JoinedQuoteData(
+            id: q['id'] as String,
+            text: q['text'] as String,
+            targetPerDay: (q['targetPerDay'] as int?) ?? 1,
+            windowStartMin: (q['windowStartMin'] as int?) ?? 480,
+            windowEndMin: (q['windowEndMin'] as int?) ?? 1200,
+            position: i,
+          ));
+        }
+        data.add(JoinedChannelData(
+          id: id,
+          name: m['name'] as String,
+          description: '',
+          quotes: quotes,
+        ));
+      }
+      _applyJoinedChannels(data, fromCache: true);
+    } catch (e) {
+      debugPrint('Could not read cached channels: $e');
+    }
+  }
+
   /// Fetches all joined channels from Supabase and merges them into the
   /// feed alongside any static-JSON circles. When signed in, the SERVER's
   /// membership list is merged in first — so a cleared cache or new
@@ -437,7 +528,10 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void _applyJoinedChannels(List<JoinedChannelData> data) {
+  void _applyJoinedChannels(
+    List<JoinedChannelData> data, {
+    bool fromCache = false,
+  }) {
     // Remove previously-joined channels that are no longer joined.
     _circles.removeWhere((c) =>
         _joinedChannelIds.contains(c.id) &&
@@ -475,9 +569,77 @@ class AppState extends ChangeNotifier {
         _circles.add(Circle(id: ch.id, name: ch.name, quotes: quotes));
       }
     }
-    _save();
+    if (!fromCache) {
+      unawaited(_saveJoinedCache());
+      _save();
+    }
     notifyListeners();
-    syncReminders();
+    if (!fromCache) syncReminders();
+  }
+
+  // ------------------------------------------------------ account restore
+
+  /// Restores everything tied to the signed-in account: attaches the backup
+  /// service (so uploads keep working), merges the personal backup (decrees,
+  /// streaks, saves), then refreshes channel memberships and content. Safe
+  /// to call repeatedly. Used at launch and right after sign-in.
+  Future<void> restoreAccountData() async {
+    if (!isSignedIn) return;
+    try {
+      backups ??= BackupService(Supabase.instance.client);
+      final service = backups!;
+      final remote = await service.fetch();
+      if (remote != null) {
+        if (mergeBackup(remote)) {
+          processMissedDays();
+          await _save();
+          await syncReminders();
+        }
+      } else {
+        // First sign-in on this account: start the backup.
+        await service.uploadNow(snapshotForBackup());
+      }
+    } catch (e) {
+      debugPrint('Account restore failed: $e');
+    }
+    await refreshJoinedChannels();
+    notifyListeners(); // the UI must show what was restored
+  }
+
+  /// Called when the app returns to the foreground: re-pull channels and
+  /// featured quotes, at most once every few minutes.
+  Future<void> refreshOnResume() async {
+    final now = clock();
+    final last = _lastResumeRefresh;
+    if (last != null && now.difference(last) < const Duration(minutes: 5)) {
+      return;
+    }
+    _lastResumeRefresh = now;
+    await refreshJoinedChannels();
+    unawaited(refreshFeaturedQuotes());
+  }
+
+  // ---------------------------------------------------- featured rotation
+
+  void _startFeaturedRotation() {
+    _featuredTimer?.cancel();
+    _featuredTimer =
+        Timer.periodic(_featuredRotateEvery, (_) => _rotateFeatured());
+  }
+
+  void _rotateFeatured() {
+    final n = _featuredQuotes.length;
+    if (n < 2) return;
+    var next = _featuredRandom.nextInt(n);
+    if (next == featuredIndex.value % n) next = (next + 1) % n;
+    featuredIndex.value = next;
+  }
+
+  @override
+  void dispose() {
+    _featuredTimer?.cancel();
+    featuredIndex.dispose();
+    super.dispose();
   }
 
   // -------------------------------------------------- join / leave / create
@@ -503,7 +665,13 @@ class AppState extends ChangeNotifier {
   Future<void> leaveChannel(String channelId) async {
     await _channelServiceForJoined.leave(channelId);
     _joinedChannelIds.remove(channelId);
+    // Drop it from the feed now. Refreshing only re-applies channels that
+    // are still joined, so a left channel would otherwise linger.
+    _circles.removeWhere((c) => c.id == channelId);
     await _saveJoinedIds();
+    await _saveJoinedCache();
+    notifyListeners();
+    await syncReminders();
     await refreshJoinedChannels();
   }
 
@@ -528,6 +696,12 @@ class AppState extends ChangeNotifier {
     // A decree id must be unique across all circles (reads and reminders
     // are keyed by it), so a repeated id is skipped.
     final seen = <String>{};
+    // Joined channels share this list: keep them when static circles reload
+    // (otherwise a slow circle fetch can wipe the feed at startup).
+    final joined = [
+      for (final c in _circles)
+        if (_joinedChannelIds.contains(c.id)) c,
+    ];
     _circles
       ..clear()
       ..addAll(data.map((c) => Circle(
@@ -537,7 +711,8 @@ class AppState extends ChangeNotifier {
               for (final q in c.quotes)
                 if (seen.add(q.id)) _circleQuoteFrom(q, c.id),
             ],
-          )));
+          )))
+      ..addAll(joined);
     if (persist) _save();
     notifyListeners();
     syncReminders();

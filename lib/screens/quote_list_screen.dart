@@ -59,7 +59,7 @@ class _QuoteListScreenState extends State<QuoteListScreen> {
         backgroundColor: Palette.deep,
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
-        label: const Text('Add a decree'),
+        label: const Text('Add Decree'),
       ),
       body: Column(
         children: [

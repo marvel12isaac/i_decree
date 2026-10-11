@@ -199,6 +199,25 @@ class ChannelService {
         .toList();
   }
 
+  /// Public channels for Home's "Discover channels" section: a pool the
+  /// caller shuffles, filters against joined channels, and shows a few at a
+  /// time. Public means join_code is null, checked server-side and again
+  /// client-side. Channels with no decrees are skipped (nothing to preview).
+  Future<List<ChannelSummary>> fetchPublicChannels({int limit = 50}) async {
+    final rows = await _client
+        .from('channels')
+        .select('id, name, description, join_code, '
+            'channel_member_counts(member_count), channel_quotes(count)')
+        .isFilter('join_code', null)
+        .order('name')
+        .limit(limit);
+    return rows
+        .where((r) => r['join_code'] == null) // defense in depth
+        .map(_summaryFrom)
+        .where((s) => s.decreesCount > 0)
+        .toList();
+  }
+
   /// Exact lookup by join code. Private channels are found ONLY through
   /// this path — possessing the code grants visibility.
   Future<ChannelDetail?> findByCode(String code) async {

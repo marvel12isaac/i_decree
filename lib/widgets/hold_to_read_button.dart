@@ -95,7 +95,7 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
                   ? widget.lockedLabel
                   : holding
                       ? 'Keep holding'
-                      : 'Hold to mark as decreed';
+                      : 'Hold to Decree!';
               return ClipRRect(
                 borderRadius: BorderRadius.circular(30),
                 child: Container(

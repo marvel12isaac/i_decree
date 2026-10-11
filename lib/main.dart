@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -19,6 +21,8 @@ Future<void> main() async {
   // final supabase = Supabase.instance.client;
   // final auth = AuthService(supabase);
   final reminders = createReminderService();
+  // AppState.load also starts the account restore when signed in (backup
+  // merge, channel memberships and content) and loads cached channels first.
   final state = await AppState.load(reminders);
   runApp(IDecreeApp(state: state));
 }
@@ -76,6 +80,8 @@ class _IDecreeAppState extends State<IDecreeApp>
     if (lifecycle == AppLifecycleState.resumed) {
       // A new day may have started while the app was in the background.
       widget.state.processMissedDays();
+      // Pull in channel changes made elsewhere (at most every few minutes).
+      unawaited(widget.state.refreshOnResume());
     }
   }
 
