@@ -1,5 +1,6 @@
 // channel_service.dart
-// Supabase queries for channel discovery, joining, creating, and reading.
+// Supabase queries for channel discovery, joining, creating, managing,
+// and reading.
 //
 // Notes:
 // - Public channel reads work signed-out (browse-without-join model).
@@ -27,7 +28,6 @@ class ChannelSummary {
   final int decreesCount;
 
   /// Set only when the caller already knows the code (code-match path).
-  /// Name-search results never carry it — public channels don't need one.
   final String? joinCode;
 }
 
@@ -120,21 +120,70 @@ class EditorDecree {
   int windowEndMin;
 }
 
+/// A stored channel decree with its server id — what the edit-decrees
+/// screen loads and saves.
+class StoredDecree {
+  StoredDecree({
+    required this.id,
+    required this.text,
+    required this.targetPerDay,
+    required this.windowStartMin,
+    required this.windowEndMin,
+  });
+
+  final String id;
+  String text;
+  int targetPerDay;
+  int windowStartMin;
+  int windowEndMin;
+}
+
+/// One channel member, as the settings screen shows them.
+class ChannelMemberInfo {
+  ChannelMemberInfo({
+    required this.userId,
+    required this.displayName,
+    required this.role,
+  });
+
+  final String userId;
+  final String displayName;
+  final String role; // owner | admin | member
+}
+
+/// Per-decree participation stats (creator view).
+class DecreeStat {
+  DecreeStat({
+    required this.quoteId,
+    required this.text,
+    required this.participants,
+    required this.fullCompletions,
+    required this.partial,
+  });
+
+  final String quoteId;
+  final String text;
+  final int participants;
+  final int fullCompletions;
+  final int partial;
+}
+
 class ChannelService {
   ChannelService(this._client);
 
   final SupabaseClient _client;
 
   /// Is this string shaped like a join code? (6 chars, letters/digits.)
-  /// Codes are uppercase; we accept lowercase input and normalize.
   static bool looksLikeCode(String q) {
     final t = q.trim();
     return t.length == 6 && RegExp(r'^[A-Za-z0-9]+$').hasMatch(t);
   }
 
+  // ------------------------------------------------------------- discovery
+
   /// Search channels by name (public, searchable ones). Private channels
-  /// are only reachable by code. We filter for public BOTH server-side
-  /// and client-side — the client-side check is the guarantee.
+  /// are only reachable by code. Filtered for public BOTH server-side and
+  /// client-side — the client-side check is the guarantee.
   Future<List<ChannelSummary>> searchByName(String query) async {
     final rows = await _client
         .from('channels')
@@ -150,10 +199,8 @@ class ChannelService {
         .toList();
   }
 
-  /// Exact lookup by join code. Returns null when no channel matches.
-  /// Private channels are found ONLY through this path, via a server
-  /// function — RLS deliberately hides private channels from direct
-  /// queries, but possessing the code grants visibility.
+  /// Exact lookup by join code. Private channels are found ONLY through
+  /// this path — possessing the code grants visibility.
   Future<ChannelDetail?> findByCode(String code) async {
     final res = await _client.rpc('channel_by_code',
         params: {'p_code': code.trim().toUpperCase()});
@@ -178,7 +225,7 @@ class ChannelService {
     );
   }
 
-  /// The decrees of one channel, for the preview screen.
+  /// The decrees of one channel (preview shape).
   Future<List<ChannelDecreePreview>> fetchDecrees(String channelId) async {
     final rows = await _client
         .from('channel_quotes')
@@ -195,9 +242,27 @@ class ChannelService {
         .toList();
   }
 
-  /// Live member/decree counts for one channel. Used by the channel list
-  /// screen's header for joined channels, where counts weren't passed in
-  /// from search.
+  /// Full decrees of one channel (edit shape) — managers only, enforced
+  /// by RLS (read is public; but only managers get here in the UI).
+  Future<List<StoredDecree>> fetchDecreesForEdit(String channelId) async {
+    final rows = await _client
+        .from('channel_quotes')
+        .select('id, text, target_per_day, window_start_min, window_end_min')
+        .eq('channel_id', channelId)
+        .order('position')
+        .limit(33);
+    return rows
+        .map((r) => StoredDecree(
+              id: r['id'] as String,
+              text: r['text'] as String,
+              targetPerDay: (r['target_per_day'] as int?) ?? 1,
+              windowStartMin: (r['window_start_min'] as int?) ?? 480,
+              windowEndMin: (r['window_end_min'] as int?) ?? 1200,
+            ))
+        .toList();
+  }
+
+  /// Live member/decree counts for one channel.
   Future<ChannelSummary?> fetchSummary(String channelId) async {
     final rows = await _client
         .from('channels')
@@ -212,14 +277,13 @@ class ChannelService {
   // ------------------------------------------------------------- joining
 
   /// Joins a private channel by its 6-character code. Requires sign-in.
-  /// Returns the joined channel's summary data.
   Future<JoinedChannelData> joinByCode(String code) async {
     final res = await _client.rpc('join_by_code',
         params: {'p_code': code.trim().toUpperCase()});
     return JoinedChannelData.fromJson(res as Map<String, dynamic>);
   }
 
-  /// Joins a public channel from the channel list screen. Requires sign-in.
+  /// Joins a public channel. Requires sign-in.
   Future<void> join(String channelId) async {
     await _client.rpc('join_channel', params: {'p_channel': channelId});
   }
@@ -229,8 +293,7 @@ class ChannelService {
     await _client.rpc('leave_channel', params: {'p_channel': channelId});
   }
 
-  /// The channel IDs the signed-in user belongs to, straight from the
-  /// server. Used to rebuild the local joined list after data loss.
+  /// The channel IDs the signed-in user belongs to.
   Future<List<String>> fetchMyMembershipIds() async {
     final rows = await _client
         .from('channel_memberships')
@@ -239,8 +302,22 @@ class ChannelService {
     return rows.map((r) => r['channel_id'] as String).toList();
   }
 
-  /// Full data for every joined channel: name + decrees. Used by AppState
-  /// to build the feed.
+  /// The signed-in user's role in a channel: owner/admin/member, or
+  /// 'none' when not a member.
+  Future<String> fetchMyRole(String channelId) async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) return 'none';
+    final rows = await _client
+        .from('channel_memberships')
+        .select('role')
+        .eq('channel_id', channelId)
+        .eq('user_id', uid)
+        .limit(1);
+    if (rows.isEmpty) return 'none';
+    return (rows.first['role'] as String?) ?? 'none';
+  }
+
+  /// Full data for every joined channel: name + decrees.
   Future<List<JoinedChannelData>> fetchJoined(List<String> channelIds) async {
     if (channelIds.isEmpty) return [];
     final rows = await _client
@@ -272,8 +349,7 @@ class ChannelService {
 
   // ------------------------------------------------------------ creating
 
-  /// Creates a channel. Returns its id and (for private channels) the
-  /// join code. The creator becomes owner-member server-side.
+  /// Creates a channel. Creator becomes owner-member server-side.
   Future<CreatedChannel> create({
     required String name,
     required String description,
@@ -292,8 +368,7 @@ class ChannelService {
     );
   }
 
-  /// Replaces all of a channel's decrees with the given list (used by the
-  /// editor's save). Simple and correct for v1's 33-decree scale.
+  /// Replaces all of a channel's decrees with the given list.
   Future<void> replaceDecrees(
       String channelId, List<EditorDecree> decrees) async {
     await _client.from('channel_quotes').delete().eq('channel_id', channelId);
@@ -309,6 +384,66 @@ class ChannelService {
           'position': i,
         }
     ]);
+  }
+
+  // ------------------------------------------------------------ managing
+
+  /// All members with display names and roles.
+  Future<List<ChannelMemberInfo>> fetchMembers(String channelId) async {
+    final rows = await _client
+        .from('channel_memberships')
+        .select('user_id, role, profiles(display_name)')
+        .eq('channel_id', channelId);
+    return rows.map((r) {
+      final profile = r['profiles'] as Map<String, dynamic>?;
+      return ChannelMemberInfo(
+        userId: r['user_id'] as String,
+        displayName:
+            (profile?['display_name'] as String?) ?? 'Decree Reader',
+        role: (r['role'] as String?) ?? 'member',
+      );
+    }).toList()
+      ..sort((a, b) {
+        int rank(String role) =>
+            role == 'owner' ? 0 : (role == 'admin' ? 1 : 2);
+        return rank(a.role).compareTo(rank(b.role));
+      });
+  }
+
+  /// Owner sets a member's role. Server enforces owner-only.
+  Future<void> setRole(String channelId, String userId, String role) async {
+    await _client.rpc('set_member_role', params: {
+      'p_channel': channelId,
+      'p_user': userId,
+      'p_role': role,
+    });
+  }
+
+  /// Regenerates a private channel's join code. Returns the new code.
+  Future<String> regenerateCode(String channelId) async {
+    final res = await _client
+        .rpc('regenerate_join_code', params: {'p_channel': channelId});
+    return res as String;
+  }
+
+  /// Deletes a channel (owner only — RLS enforces).
+  Future<void> deleteChannel(String channelId) async {
+    await _client.from('channels').delete().eq('id', channelId);
+  }
+
+  /// Per-decree participation stats. Server refuses non-managers.
+  Future<List<DecreeStat>> fetchStats(String channelId) async {
+    final rows = await _client
+        .rpc('channel_stats_for', params: {'p_channel': channelId});
+    return (rows as List)
+        .map((r) => DecreeStat(
+              quoteId: r['quote_id'] as String,
+              text: (r['decree_text'] as String?) ?? '',
+              participants: (r['participants'] as int?) ?? 0,
+              fullCompletions: (r['full_completions'] as int?) ?? 0,
+              partial: (r['partial'] as int?) ?? 0,
+            ))
+        .toList();
   }
 
   // ------------------------------------------------------------- internal

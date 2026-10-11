@@ -10,16 +10,16 @@ import '../widgets/due_time.dart';
 import '../widgets/quote_text.dart';
 import '../widgets/read_crowns.dart';
 import '../widgets/sign_in_sheet.dart';
+import 'channel_settings_screen.dart';
 import 'quote_view_screen.dart';
 
 /// One channel's decree list — the single channel screen.
 ///
-/// Member mode: bold title/body rows, due status, crowns, tap to read.
-///
-/// Preview mode (entered from search when not a member): the SAME layout,
-/// plus a join banner under the header. Rows are fully tappable — the
-/// quote view itself gates decreeing/adding behind joining. Header shows
-/// member and decree counts in both modes with proper plurals.
+/// Member mode: bold title/body rows, due status, crowns, tap to read,
+/// and an overflow menu (settings for managers, share code, report,
+/// leave). Preview mode (from search, not a member): the SAME layout plus
+/// a join banner; rows open the quote view, which gates decreeing/adding
+/// behind joining. Header shows member and decree counts in both modes.
 class CircleQuoteListScreen extends StatefulWidget {
   const CircleQuoteListScreen({
     super.key,
@@ -33,21 +33,11 @@ class CircleQuoteListScreen extends StatefulWidget {
   });
 
   final String circleId;
-
-  /// Header title override (preview mode, channel not in the feed yet).
   final String? channelName;
-
-  /// Header counts (preview mode). Null → fetched live (joined channels).
   final int? memberCount;
   final int? decreesCount;
-
-  /// Set when the user arrived via a code match; joining uses the code.
   final String? joinCode;
-
-  /// Decrees already fetched (code-match path). Null → fetch on open.
   final List<ChannelDecreePreview>? preloadedQuotes;
-
-  /// True when opened from a channel search result.
   final bool isChannelPreview;
 
   @override
@@ -57,32 +47,54 @@ class CircleQuoteListScreen extends StatefulWidget {
 class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
   Timer? _clockTimer;
 
-  // Preview-mode decree list (fetched or preloaded). Null in member mode.
   List<ChannelDecreePreview>? _previewDecrees;
   bool _loadingPreview = false;
   String? _error;
   bool _joining = false;
 
-  // Live counts for joined channels (fetched once).
   bool _countsTried = false;
   int? _fetchedMemberCount;
   int? _fetchedDecreesCount;
 
+  // Role, for the overflow menu. 'member' for static circles.
+  String _myRole = 'member';
+  String? _knownCode;
+
+  static final _uuidRe =
+      RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}', caseSensitive: false);
+  bool get _isSupabaseChannel => _uuidRe.hasMatch(widget.circleId);
+
+  bool get _isManager => _myRole == 'owner' || _myRole == 'admin';
+
   @override
   void initState() {
     super.initState();
-    // Rebuild every minute so due/next/overdue labels stay current without
-    // needing the user to navigate away and back.
     _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
     _maybeLoadPreview();
+    _loadRoleAndCode();
   }
 
   @override
   void dispose() {
     _clockTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadRoleAndCode() async {
+    if (!_isSupabaseChannel) return;
+    final service = ChannelService(Supabase.instance.client);
+    try {
+      final role = await service.fetchMyRole(widget.circleId);
+      if (!mounted) return;
+      setState(() => _myRole = role);
+    } catch (_) {}
+    try {
+      final s = await service.fetchSummary(widget.circleId);
+      if (!mounted || s == null) return;
+      setState(() => _knownCode = s.joinCode);
+    } catch (_) {}
   }
 
   @override
@@ -110,8 +122,6 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
             '${_plural(decreesCount ?? 0, 'decree', 'decrees')}'
         : null;
 
-    // Joined (Supabase) channels fetch their live counts once, so members
-    // see the same header as searchers. Static-JSON channels skip this.
     if (countsLine == null && inFeed && !_countsTried) {
       _countsTried = true;
       _fetchCounts();
@@ -128,6 +138,9 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
               Text(countsLine, style: TextStyle(fontSize: 12, color: c.muted)),
           ],
         ),
+        actions: [
+          if (!preview) _buildMenu(context, state),
+        ],
       ),
       body: Column(
         children: [
@@ -137,6 +150,96 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
         ],
       ),
     );
+  }
+
+  // ----------------------------------------------------------------- menu
+
+  Widget _buildMenu(BuildContext context, AppState state) {
+    return PopupMenuButton<String>(
+      onSelected: (value) => _onMenu(value, state),
+      itemBuilder: (context) => [
+        if (_isManager && _isSupabaseChannel)
+          const PopupMenuItem(value: 'settings', child: Text('Channel settings')),
+        if (_isManager && _isSupabaseChannel)
+          const PopupMenuItem(
+              value: 'stats', child: Text('Participation stats')),
+        if (_knownCode != null)
+          const PopupMenuItem(value: 'share', child: Text('Share code')),
+        if (_isSupabaseChannel && _myRole != 'owner')
+          const PopupMenuItem(value: 'report', child: Text('Report channel')),
+        if (_isSupabaseChannel && _myRole != 'owner')
+          const PopupMenuItem(
+              value: 'leave',
+              child: Text('Leave channel',
+                  style: TextStyle(color: Colors.red))),
+      ],
+    );
+  }
+
+  Future<void> _onMenu(String value, AppState state) async {
+    switch (value) {
+      case 'settings':
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) =>
+                ChannelSettingsScreen(channelId: widget.circleId),
+          ),
+        );
+        await state.refreshJoinedChannels(); // edits/deletes may have landed
+        break;
+      case 'stats':
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ChannelSettingsScreen(channelId: widget.circleId),
+          ),
+        );
+        break;
+      case 'share':
+        final code = _knownCode;
+        if (code == null) break;
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Share code'),
+            content: Text(
+                'Invite people: search this code in the app — $code'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Done')),
+            ],
+          ),
+        );
+        break;
+      case 'report':
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Reports are reviewed by the iDecree team. (Reporting arrives '
+                'in the next update.)')));
+        break;
+      case 'leave':
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Leave this channel?'),
+            content: const Text(
+                'It leaves your feed. Personal copies you made are kept.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel')),
+              TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Leave')),
+            ],
+          ),
+        );
+        if (confirmed == true) {
+          await state.leaveChannel(widget.circleId);
+          if (mounted) Navigator.of(context).pop();
+        }
+        break;
+    }
   }
 
   // ------------------------------------------------------------- preview
@@ -166,6 +269,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
   }
 
   Future<void> _fetchCounts() async {
+    if (!_isSupabaseChannel) return;
     try {
       final s = await ChannelService(Supabase.instance.client)
           .fetchSummary(widget.circleId);
@@ -219,8 +323,6 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       } else {
         await state.joinPublicChannel(widget.circleId);
       }
-      // No navigation needed: build() re-runs on notifyListeners and the
-      // screen switches itself into member mode.
     } catch (e) {
       if (!mounted) return;
       _showCouldNotJoin();
@@ -229,8 +331,6 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     }
   }
 
-  /// Extracted so the SnackBar uses the State's context directly after a
-  /// mounted check — satisfies use_build_context_synchronously.
   void _showCouldNotJoin() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Could not join. Try again.')),
@@ -276,7 +376,6 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       );
     }
 
-    // Member mode — the original behaviour, unchanged.
     final quotes = inFeed ? circle!.quotes : const <Quote>[];
     return quotes.isEmpty
         ? Center(
@@ -348,8 +447,6 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
           children: [
             QuoteTitleBody(text: d.text),
             const SizedBox(height: 12),
-            // Empty crowns show the decree's daily target, matching how
-            // the row will look once joined. No status text (not a member).
             ReadCrowns(done: 0, target: d.targetPerDay),
           ],
         ),
@@ -357,9 +454,6 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     );
   }
 
-  // ------------------------------------------------------------ utilities
-
-  /// "0 members", "1 member", "2 members" — 0 takes the plural.
   String _plural(int n, String one, String many) =>
       n == 1 ? '1 $one' : '$n $many';
 }

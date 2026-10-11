@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -6,22 +7,27 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../services/channel_service.dart';
+import '../services/featured_quote_service.dart';
 import '../theme.dart';
 import '../widgets/due_time.dart';
+import '../widgets/read_crowns.dart';
 import 'channel_editor_screen.dart';
 import 'circle_quote_list_screen.dart';
 import 'quote_list_screen.dart';
 import 'quote_view_screen.dart';
+import 'quote_editor_screen.dart';
 import 'streak_calendar_screen.dart';
 
-/// Home: the app icon and theme toggle, a search field, the daily streak
-/// card, then a chat-style list of spaces (Personal, then one row per
-/// Channel). Typing in the search field swaps the list for matching
-/// decrees and channels (local + Supabase). A 6-character code query
-/// returns only the channel that code belongs to.
+/// Home (wireframe 1): centered logo with theme toggle, the streak card
+/// with 7-day dots, the search field, a horizontal My Decrees card row
+/// (Featured first, then decrees, then an add card), and the Channels
+/// section sorted chat-style (most imminent decree on top).
 ///
-/// Channels the user already belongs to appear only as local feed rows in
-/// search — never as duplicate remote results with an Open button.
+/// Searching swaps everything below the header for unified results
+/// (wireframes 2a/2b/2c): local decree hits plus public channels from
+/// Supabase, or a single code match. Channels the user already belongs to
+/// render only as local feed rows — never as duplicate remote results.
+/// Back from search clears the search instead of exiting the app.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -137,11 +143,14 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildHeader(state, isDark, c),
-                _buildSearchField(c),
-                if (query.isEmpty)
-                  ..._buildHome(context, state, c)
-                else
+                if (query.isEmpty) ...[
+                  _buildStreakCard(context, state, c),
+                  _buildSearchField(c),
+                  ..._buildHome(context, state, c),
+                ] else ...[
+                  _buildSearchField(c),
                   ..._buildResults(context, state, c, query),
+                ],
               ],
             ),
           ),
@@ -183,6 +192,137 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ------------------------------------------------------------ streak card
+
+  Widget _buildStreakCard(BuildContext context, AppState state, AppColors c) {
+    final streak = state.dailyStreak();
+    final best = state.bestDaily > streak ? state.bestDaily : streak;
+    final readsToday = state.readsTodayAll();
+
+    final now = state.clock();
+    final today = DateTime(now.year, now.month, now.day);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 4, 24, 8),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: c.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.local_fire_department,
+                          size: 48,
+                          color: streak > 0 ? c.flame : c.muted,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '$streak',
+                          style: TextStyle(
+                            fontSize: 56,
+                            height: 1,
+                            fontWeight: FontWeight.w700,
+                            color: streak > 0 ? c.flame : c.muted,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'day streak',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text('Best: $best',
+                                style:
+                                    TextStyle(fontSize: 12, color: c.blue)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                _SavesBadge(tokens: state.tokens),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Text(
+              streak == 0 && readsToday == 0
+                  ? 'Decree today to start your streak.'
+                  : readsToday == 0
+                      ? 'Decree today to keep it going.'
+                      : readsToday == 1
+                          ? 'You have decreed once today.'
+                          : 'You have decreed $readsToday times today.',
+              style: TextStyle(fontSize: 12, color: c.muted),
+            ),
+            const SizedBox(height: 16),
+            Divider(color: c.line),
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const StreakCalendarScreen(),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 12, bottom: 4),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Text('Last 7 days',
+                            style: TextStyle(color: c.muted, fontSize: 13)),
+                        const Spacer(),
+                        Text('More',
+                            style: TextStyle(color: c.muted, fontSize: 13)),
+                        Icon(Icons.chevron_right, size: 18, color: c.muted),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        for (var i = 6; i >= 0; i--)
+                          _WeekDot(
+                            day: DateTime(
+                                today.year, today.month, today.day - i),
+                            isToday: i == 0,
+                            state: state,
+                            letters: _weekdayLetters,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ----------------------------------------------------------------- search
 
   Widget _buildSearchField(AppColors c) {
@@ -191,7 +331,7 @@ class _HomeScreenState extends State<HomeScreen> {
       borderSide: BorderSide(color: c.line),
     );
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
       child: TextField(
         controller: _search,
         onChanged: (_) {}, // listener handles it
@@ -224,6 +364,171 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ------------------------------------------------------------- home body
+
+  List<Widget> _buildHome(BuildContext context, AppState state, AppColors c) {
+    return [
+      if (!state.reminders.supported)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+          child: Text(
+            'Reminders work in the Android app. Web reminders come later.',
+            style: TextStyle(color: c.muted, fontSize: 12),
+          ),
+        ),
+      _SectionLabel(
+        'My Decrees',
+        showChevron: true,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const QuoteListScreen()),
+        ),
+      ),
+      _buildDecreeCards(context, state, c),
+      const SizedBox(height: 8),
+      _SectionLabel(
+        'Channels',
+        trailing: TextButton.icon(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const ChannelEditorScreen()),
+          ),
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('New'),
+        ),
+      ),
+      if (state.circles.isEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          child: Text('No channels yet', style: TextStyle(color: c.muted)),
+        )
+      else
+        for (final circle in _channelsSorted(state)) ...[
+          _channelRow(context, state, c, circle),
+          const Divider(),
+        ],
+      const SizedBox(height: 12),
+    ];
+  }
+
+  /// Wireframe 1's horizontal card row: Featured first, then one card per
+  /// personal decree, then the dashed add card.
+  Widget _buildDecreeCards(BuildContext context, AppState state, AppColors c) {
+    final cards = <Widget>[];
+
+    // Featured card — rotating, reference shown, opens My Decrees where
+    // the full-size card lives (wireframe 1b behaviour).
+    if (state.featuredQuotes.isNotEmpty) {
+      cards.add(_FeaturedCard(
+        quotes: state.featuredQuotes,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const QuoteListScreen()),
+        ),
+      ));
+    }
+
+    for (final quote in state.quotes) {
+      final due = state.dueInfoFor(quote);
+      cards.add(_DecreeCard(
+        text: quote.text,
+        dueLabel: dueLabelText(context, due),
+        dueColor: dueLabelColor(due, c),
+        done: state.readsTodayFor(quote.id),
+        target: quote.targetPerDay,
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => QuoteViewScreen(quoteId: quote.id)),
+        ),
+      ));
+    }
+
+    cards.add(_AddCard(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const QuoteEditorScreen()),
+      ),
+    ));
+
+    // Fixed height: inside Home's vertical scroll view the cards would
+    // otherwise get unbounded height, and the Expandeds inside them could
+    // never resolve ("never been laid out" hit-test crashes).
+    return SizedBox(
+      height: 96,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+        child: Row(
+          children: [
+            for (var i = 0; i < cards.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              cards[i],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Channels sorted chat-style: the one with the most imminent decree on
+  /// top — overdue first (longest-waiting slot first), then upcoming
+  /// (soonest first), then recently-read, then the rest.
+  List<Circle> _channelsSorted(AppState state) {
+    int rank(DueKind k) {
+      switch (k) {
+        case DueKind.overdue:
+          return 0;
+        case DueKind.upcoming:
+          return 1;
+        case DueKind.lastRead:
+          return 2;
+        case DueKind.none:
+          return 3;
+      }
+    }
+
+    final sorted = [...state.circles];
+    sorted.sort((a, b) {
+      final da = state.spaceDueInfo(a.quotes);
+      final db = state.spaceDueInfo(b.quotes);
+      final r = rank(da.kind).compareTo(rank(db.kind));
+      if (r != 0) return r;
+      return (da.minutes ?? 0).compareTo(db.minutes ?? 0);
+    });
+    return sorted;
+  }
+
+  String _channelSubtitle(Circle circle) => circle.quotes.isEmpty
+      ? 'No decrees yet'
+      : _quotePreview(circle.quotes.first.text);
+
+  void _openCircle(BuildContext context, Circle circle) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CircleQuoteListScreen(circleId: circle.id),
+      ),
+    );
+  }
+
+  /// One channel's Home row: avatar, name, first-decree preview, and the
+  /// combined due/next/last-read status with unread badge on the right.
+  Widget _channelRow(
+    BuildContext context,
+    AppState state,
+    AppColors c,
+    Circle circle, {
+    String highlight = '',
+  }) {
+    final due = state.spaceDueInfo(circle.quotes);
+    return _SpaceRow(
+      icon: Icons.groups_outlined,
+      title: circle.name,
+      subtitle: _channelSubtitle(circle),
+      unread: state.unreadCountFor(circle.quotes),
+      dueLabel: dueLabelText(context, due),
+      dueColor: dueLabelColor(due, c),
+      highlight: highlight,
+      onTap: () => _openCircle(context, circle),
+    );
+  }
+
+  // --------------------------------------------------------------- results
+
   List<Widget> _buildResults(
     BuildContext context,
     AppState state,
@@ -253,13 +558,12 @@ class _HomeScreenState extends State<HomeScreen> {
       if (local != null) {
         return [
           const _SectionLabel('Channels'),
-          _channelLocalRow(context, state, c, local),
+          _channelRow(context, state, c, local, highlight: query),
         ];
       }
       return [
         const _SectionLabel('Channels'),
-        _channelResultRow(context, c, match.summary,
-            detail: match),
+        _channelResultRow(context, c, match.summary, detail: match),
       ];
     }
 
@@ -287,7 +591,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // duplicates with an Open button.
     final channelRows = <Widget>[
       for (final circle in localCircles)
-        _channelLocalRow(context, state, c, circle),
+        _channelRow(context, state, c, circle, highlight: query),
       for (final ch in _channelResults)
         if (!state.isMemberOf(ch.id)) _channelResultRow(context, c, ch),
     ];
@@ -402,274 +706,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
-  /// A locally-known channel row in search results (feed row with badges).
-  Widget _channelLocalRow(
-    BuildContext context,
-    AppState state,
-    AppColors c,
-    Circle circle,
-  ) {
-    final due = state.spaceDueInfo(circle.quotes);
-    return _SpaceRow(
-      icon: Icons.groups_outlined,
-      title: circle.name,
-      subtitle: _circleSubtitle(circle),
-      unread: state.unreadCountFor(circle.quotes),
-      dueLabel: dueLabelText(context, due),
-      dueColor: dueLabelColor(due, c),
-      highlight: _search.text.trim(),
-      onTap: () => _openCircle(context, circle),
-    );
-  }
-
-  // ------------------------------------------------------------------- home
-
-  List<Widget> _buildHome(BuildContext context, AppState state, AppColors c) {
-    final personalCount = state.quotes.length;
-
-    return [
-      _buildStreakCard(context, state, c),
-      if (!state.reminders.supported)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-          child: Text(
-            'Reminders work in the Android app. Web reminders come later.',
-            style: TextStyle(color: c.muted),
-          ),
-        ),
-      const Divider(),
-      _SpaceRow(
-        icon: Icons.person_outline,
-        title: 'My Decrees',
-        subtitle: personalCount == 0
-            ? 'No decrees yet'
-            : _preview(state.quotes.first.text),
-        unread: state.unreadCountFor(state.quotes),
-        dueLabel: dueLabelText(context, state.spaceDueInfo(state.quotes)),
-        dueColor: dueLabelColor(state.spaceDueInfo(state.quotes), c),
-        personal: true,
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const QuoteListScreen()),
-        ),
-      ),
-      const Divider(),
-      _SectionLabel(
-        'Channels',
-        trailing: TextButton.icon(
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const ChannelEditorScreen()),
-          ),
-          icon: const Icon(Icons.add, size: 18),
-          label: const Text('New'),
-        ),
-      ),
-      if (state.circles.isEmpty)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-          child: Text('No channels available', style: TextStyle(color: c.muted)),
-        )
-      else
-        for (final circle in _channelsSorted(state)) ...[
-          _circleRow(context, state, c, circle),
-          const Divider(),
-        ],
-    ];
-
-    // (Helper below keeps build small.)
-  }
-
-  /// Channels sorted chat-style: the one with the most imminent decree on
-  /// top — overdue first (longest-waiting slot first), then upcoming
-  /// (soonest first), then recently-read, then the rest.
-  List<Circle> _channelsSorted(AppState state) {
-    int rank(DueKind k) {
-      switch (k) {
-        case DueKind.overdue:
-          return 0;
-        case DueKind.upcoming:
-          return 1;
-        case DueKind.lastRead:
-          return 2;
-        case DueKind.none:
-          return 3;
-      }
-    }
-
-    final sorted = [...state.circles];
-    sorted.sort((a, b) {
-      final da = state.spaceDueInfo(a.quotes);
-      final db = state.spaceDueInfo(b.quotes);
-      final r = rank(da.kind).compareTo(rank(db.kind));
-      if (r != 0) return r;
-      return (da.minutes ?? 0).compareTo(db.minutes ?? 0);
-    });
-    return sorted;
-  }
-
-  String _circleSubtitle(Circle circle) =>
-      circle.quotes.isEmpty
-          ? 'No decrees yet'
-          : _preview(circle.quotes.first.text);
-
-  void _openCircle(BuildContext context, Circle circle) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CircleQuoteListScreen(circleId: circle.id),
-      ),
-    );
-  }
-
-  /// One Channel's Home row, with its due/next/last-read status computed once.
-  Widget _circleRow(
-    BuildContext context,
-    AppState state,
-    AppColors c,
-    Circle circle, {
-    String highlight = '',
-  }) {
-    final due = state.spaceDueInfo(circle.quotes);
-    return _SpaceRow(
-      icon: Icons.groups_outlined,
-      title: circle.name,
-      subtitle: _circleSubtitle(circle),
-      unread: state.unreadCountFor(circle.quotes),
-      dueLabel: dueLabelText(context, due),
-      dueColor: dueLabelColor(due, c),
-      highlight: highlight,
-      onTap: () => _openCircle(context, circle),
-    );
-  }
-
-  Widget _buildStreakCard(BuildContext context, AppState state, AppColors c) {
-    final streak = state.dailyStreak();
-    final best = state.bestDaily > streak ? state.bestDaily : streak;
-    final readsToday = state.readsTodayAll();
-
-    final now = state.clock();
-    final today = DateTime(now.year, now.month, now.day);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: c.surface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: c.line),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.local_fire_department,
-                          size: 48,
-                          color: streak > 0 ? c.flame : c.muted,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '$streak',
-                          style: TextStyle(
-                            fontSize: 56,
-                            height: 1,
-                            fontWeight: FontWeight.w700,
-                            color: streak > 0 ? c.flame : c.muted,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'day streak',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            Text('Best: $best',
-                                style:
-                                    TextStyle(fontSize: 12, color: c.blue)),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                _SavesBadge(tokens: state.tokens),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Text(
-              streak == 0 && readsToday == 0
-                  ? 'Decree today to start your streak.'
-                  : readsToday == 0
-                      ? 'Decree today to keep it going.'
-                      : readsToday == 1
-                          ? 'You have decreed once today.'
-                          : 'You have decreed $readsToday times today.',
-              style: TextStyle(fontSize: 12, color: c.muted),
-            ),
-            const SizedBox(height: 16),
-            Divider(color: c.line),
-            InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const StreakCalendarScreen(),
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.only(top: 12, bottom: 4),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        Text('Last 7 days',
-                            style: TextStyle(color: c.muted, fontSize: 13)),
-                        const Spacer(),
-                        Text('Calendar',
-                            style: TextStyle(color: c.muted, fontSize: 13)),
-                        Icon(Icons.chevron_right,
-                            size: 18, color: c.muted),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        for (var i = 6; i >= 0; i--)
-                          _WeekDot(
-                            day: DateTime(
-                                today.year, today.month, today.day - i),
-                            isToday: i == 0,
-                            state: state,
-                            letters: _weekdayLetters,
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 // ---------------------------------------------------------------- helpers
@@ -679,6 +715,10 @@ class _HomeScreenState extends State<HomeScreen> {
 String _plural(int n, String one, [String? many]) =>
     n == 1 ? '1 $one' : '$n ${many ?? '${one}s'}';
 
+/// A short one-line preview of a decree, shown under a space's name.
+String _quotePreview(String text) =>
+    '"${text.replaceAll(RegExp(r'\s+'), ' ').trim()}"';
+
 /// One search hit: a decree plus the name of the space it lives in.
 class _Hit {
   const _Hit(this.quote, this.source);
@@ -686,10 +726,6 @@ class _Hit {
   final Quote quote;
   final String source;
 }
-
-/// A short one-line preview of a decree, shown under a space's name.
-String _preview(String text) =>
-    '"${text.replaceAll(RegExp(r'\s+'), ' ').trim()}"';
 
 /// Splits [text] into spans, giving every case-insensitive match of [query]
 /// a highlighted background.
@@ -755,30 +791,264 @@ class _SavesBadge extends StatelessWidget {
   }
 }
 
+/// A tappable section header: label, optional trailing widget, optional
+/// tap (whole row) with a chevron shown when tappable.
 class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text, {this.trailing});
+  const _SectionLabel(this.text, {this.trailing, this.onTap, this.showChevron = false});
 
   final String text;
   final Widget? trailing;
+  final VoidCallback? onTap;
+  final bool showChevron;
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-      child: Row(
-        children: [
-          Text(
-            text,
-            style: TextStyle(
-              color: c.muted,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
+    final label = Row(
+      children: [
+        Text(
+          text,
+          style: TextStyle(
+            color: c.muted,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
           ),
-          const Spacer(),
-          if (trailing != null) trailing!,
+        ),
+        if (showChevron) ...[
+          const SizedBox(width: 2),
+          Icon(Icons.chevron_right, size: 18, color: c.muted),
         ],
+        const Spacer(),
+        if (trailing != null) trailing!,
+      ],
+    );
+    if (onTap == null) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+        child: label,
+      );
+    }
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+        child: label,
+      ),
+    );
+  }
+}
+
+/// Wireframe 1's teal-bordered Featured card, first in the My Decrees row.
+/// Rotates through the hosted featured quotes every 2 minutes (same cadence
+/// as the old full-width card) and shows the reference line when present.
+/// Tapping opens My Decrees, where the full rotating card lives.
+class _FeaturedCard extends StatefulWidget {
+  const _FeaturedCard({required this.quotes, required this.onTap});
+
+  final List<FeaturedQuote> quotes;
+  final VoidCallback onTap;
+
+  @override
+  State<_FeaturedCard> createState() => _FeaturedCardState();
+}
+
+class _FeaturedCardState extends State<_FeaturedCard> {
+  static const _rotateEvery = Duration(minutes: 2);
+
+  Timer? _timer;
+  final _random = Random();
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(_rotateEvery, (_) => _rotate());
+  }
+
+  @override
+  void didUpdateWidget(_FeaturedCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The quote list grew past the current index (e.g. refresh landed);
+    // reset so we always show something valid.
+    if (widget.quotes.isNotEmpty && _index >= widget.quotes.length) {
+      _index = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _rotate() {
+    final quotes = widget.quotes;
+    if (!mounted || quotes.length < 2) return;
+    var next = _random.nextInt(quotes.length);
+    if (next == _index % quotes.length) next = (next + 1) % quotes.length;
+    setState(() => _index = next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    if (widget.quotes.isEmpty) return const SizedBox.shrink();
+    final quote = widget.quotes[_index % widget.quotes.length];
+
+    return InkWell(
+      onTap: widget.onTap,
+      child: Container(
+        width: 170,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: c.surface,
+          border: Border.all(color: c.teal),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.auto_awesome, size: 13, color: c.teal),
+                const SizedBox(width: 4),
+                Text(
+                  'Featured',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: c.teal,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: Text(
+                quote.text,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.35,
+                  color: c.text,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+            if (quote.reference.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Text(
+                  '— ${quote.reference}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 9, color: c.muted),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One personal decree card in the My Decrees row: bold title, then a
+/// status + crowns meta row. Fixed size so the row stays uniform.
+class _DecreeCard extends StatelessWidget {
+  const _DecreeCard({
+    required this.text,
+    required this.dueLabel,
+    required this.dueColor,
+    required this.done,
+    required this.target,
+    required this.onTap,
+  });
+
+  final String text;
+
+  /// Null when there's no status to show (e.g. reminders off, never read).
+  final String? dueLabel;
+  final Color? dueColor;
+  final int done;
+  final int target;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final breakAt = text.indexOf('\n');
+    final title =
+        (breakAt < 0 ? text : text.substring(0, breakAt)).trim();
+
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        width: 132,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: c.surface,
+          border: Border.all(color: c.line),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: c.text,
+                  height: 1.25,
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    dueLabel ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        TextStyle(fontSize: 10, color: dueColor ?? c.muted),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                ReadCrowns(done: done, target: target, size: 12),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The dashed add card at the end of the My Decrees row.
+class _AddCard extends StatelessWidget {
+  const _AddCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        width: 64,
+        // height: 92,
+        decoration: BoxDecoration(
+          border: Border.all(color: c.line),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(Icons.add, size: 28, color: c.muted),
       ),
     );
   }
@@ -822,9 +1092,8 @@ class _SpaceRow extends StatelessWidget {
     required this.onTap,
     this.dueLabel,
     this.dueColor,
-    this.personal = false,
     this.highlight = '',
-  });
+  }) : personal = false;
 
   final IconData icon;
   final String title;
@@ -841,6 +1110,8 @@ class _SpaceRow extends StatelessWidget {
 
   /// Search text to highlight inside [title].
   final String highlight;
+
+  
 
   @override
   Widget build(BuildContext context) {
