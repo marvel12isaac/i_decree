@@ -19,6 +19,7 @@ class ChannelSummary {
     required this.memberCount,
     required this.decreesCount,
     this.joinCode,
+    this.reminderMode = 'timed',
   });
 
   final String id;
@@ -26,6 +27,10 @@ class ChannelSummary {
   final String description;
   final int memberCount;
   final int decreesCount;
+
+  /// 'timed' (reminders at each decree's set times) or 'frequency' (daily
+  /// count only, one nudge a day).
+  final String reminderMode;
 
   /// Set only when the caller already knows the code (code-match path).
   final String? joinCode;
@@ -61,6 +66,7 @@ class JoinedChannelData {
     required this.name,
     required this.description,
     this.quotes = const [],
+    this.reminderMode = 'timed',
   });
 
   factory JoinedChannelData.fromJson(Map<String, dynamic> j) =>
@@ -68,11 +74,13 @@ class JoinedChannelData {
         id: j['id'] as String,
         name: j['name'] as String,
         description: (j['description'] as String?) ?? '',
+        reminderMode: (j['reminder_mode'] as String?) ?? 'timed',
       );
 
   final String id;
   final String name;
   final String description;
+  final String reminderMode;
   final List<JoinedQuoteData> quotes;
 }
 
@@ -285,7 +293,7 @@ class ChannelService {
   Future<ChannelSummary?> fetchSummary(String channelId) async {
     final rows = await _client
         .from('channels')
-        .select('id, name, description, join_code, '
+        .select('id, name, description, join_code, reminder_mode, '
             'channel_member_counts(member_count), channel_quotes(count)')
         .eq('id', channelId)
         .limit(1);
@@ -341,7 +349,7 @@ class ChannelService {
     if (channelIds.isEmpty) return [];
     final rows = await _client
         .from('channels')
-        .select('id, name, description, channel_quotes(id, text, '
+        .select('id, name, description, reminder_mode, channel_quotes(id, text, '
             'target_per_day, window_start_min, window_end_min, position)')
         .inFilter('id', channelIds)
         .order('name');
@@ -362,6 +370,7 @@ class ChannelService {
         name: r['name'] as String,
         description: (r['description'] as String?) ?? '',
         quotes: quotes,
+        reminderMode: (r['reminder_mode'] as String?) ?? 'timed',
       );
     }).toList();
   }
@@ -373,6 +382,7 @@ class ChannelService {
     required String name,
     required String description,
     required bool isPublic,
+    String reminderMode = 'timed',
   }) async {
     final res = await _client.rpc('create_channel', params: {
       'p_name': name.trim(),
@@ -380,6 +390,11 @@ class ChannelService {
       'p_public': isPublic,
     });
     final r = res as Map<String, dynamic>;
+    // The create_channel function doesn't know about reminder modes; the
+    // creator is already the owner, so the normal update policy applies.
+    if (reminderMode != 'timed') {
+      await updateReminderMode(r['id'] as String, reminderMode);
+    }
     return CreatedChannel(
       id: r['id'] as String,
       name: r['name'] as String,
@@ -445,6 +460,38 @@ class ChannelService {
     return res as String;
   }
 
+  /// Sets how reminders work in a channel: 'timed' or 'frequency'.
+  /// Managers only (RLS enforces).
+  Future<void> updateReminderMode(String channelId, String mode) async {
+    assert(mode == 'timed' || mode == 'frequency');
+    await _client
+        .from('channels')
+        .update({'reminder_mode': mode}).eq('id', channelId);
+  }
+
+  // ------------------------------------------------------------ reporting
+
+  /// Files a report about a channel, or about one of its decrees when
+  /// [quoteId] is given. [reason] is 'spam', 'inappropriate' or 'other'.
+  /// Needs a signed-in user. Reporters can write but not read reports.
+  Future<void> fileReport({
+    required String channelId,
+    String? quoteId,
+    required String reason,
+    String? comment,
+  }) async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) throw StateError('Sign in to report.');
+    final trimmed = comment?.trim();
+    await _client.from('reports').insert({
+      'channel_id': channelId,
+      'quote_id': quoteId,
+      'reporter_id': uid,
+      'reason': reason,
+      'comment': (trimmed == null || trimmed.isEmpty) ? null : trimmed,
+    });
+  }
+
   /// Deletes a channel (owner only — RLS enforces).
   Future<void> deleteChannel(String channelId) async {
     await _client.from('channels').delete().eq('id', channelId);
@@ -486,6 +533,7 @@ class ChannelService {
       memberCount: memberCount,
       decreesCount: decreesCount,
       joinCode: r['join_code'] as String?,
+      reminderMode: (r['reminder_mode'] as String?) ?? 'timed',
     );
   }
 }

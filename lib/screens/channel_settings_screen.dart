@@ -30,6 +30,7 @@ class _ChannelSettingsScreenState extends State<ChannelSettingsScreen> {
   ChannelSummary? _summary;
   List<ChannelMemberInfo> _members = [];
   String? _error;
+  bool _savingMode = false;
 
   bool get _isOwner => _myRole == 'owner';
   bool get _isManager => _myRole == 'owner' || _myRole == 'admin';
@@ -100,6 +101,20 @@ class _ChannelSettingsScreenState extends State<ChannelSettingsScreen> {
                     if (_isPrivate) ...[
                       _section(context, 'Join code'),
                       _codeRow(context),
+                    ],
+                    if (_isManager) ...[
+                      _section(context, 'Reminders'),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Remind at set times'),
+                        subtitle: Text(_summary?.reminderMode == 'frequency'
+                            ? 'Off: no fixed times. Members aim for the daily '
+                                'count and get one nudge a day.'
+                            : 'On: members can turn on reminders at each '
+                                'decree\u2019s set times.'),
+                        value: _summary?.reminderMode != 'frequency',
+                        onChanged: _savingMode ? null : _setReminderMode,
+                      ),
                     ],
                     const SizedBox(height: 8),
                     if (_isManager)
@@ -238,6 +253,28 @@ class _ChannelSettingsScreenState extends State<ChannelSettingsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not change the role.')));
+    }
+  }
+
+  Future<void> _setReminderMode(bool timed) async {
+    setState(() => _savingMode = true);
+    try {
+      await _service.updateReminderMode(
+          widget.channelId, timed ? 'timed' : 'frequency');
+      await _load();
+      if (!mounted) return;
+      await AppScope.of(context).refreshJoinedChannels();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Saved. Members see this next time their app refreshes.')));
+    } catch (e) {
+      debugPrint('Could not change reminder mode: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not save. Try again.')));
+    } finally {
+      if (mounted) setState(() => _savingMode = false);
     }
   }
 

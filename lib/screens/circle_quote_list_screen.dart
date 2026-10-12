@@ -9,6 +9,8 @@ import '../theme.dart';
 import '../widgets/due_time.dart';
 import '../widgets/quote_text.dart';
 import '../widgets/read_crowns.dart';
+import '../widgets/reminder_bell.dart';
+import '../widgets/report_dialog.dart';
 import '../widgets/sign_in_sheet.dart';
 import 'channel_settings_screen.dart';
 import 'quote_view_screen.dart';
@@ -139,7 +141,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
           ],
         ),
         actions: [
-          if (!preview) _buildMenu(context, state),
+          _buildMenu(context, state, preview: preview),
         ],
       ),
       body: Column(
@@ -154,20 +156,24 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
 
   // ----------------------------------------------------------------- menu
 
-  Widget _buildMenu(BuildContext context, AppState state) {
+  Widget _buildMenu(
+    BuildContext context,
+    AppState state, {
+    required bool preview,
+  }) {
     return PopupMenuButton<String>(
       onSelected: (value) => _onMenu(value, state),
       itemBuilder: (context) => [
-        if (_isManager && _isSupabaseChannel)
+        if (!preview && _isManager && _isSupabaseChannel)
           const PopupMenuItem(value: 'settings', child: Text('Channel settings')),
-        if (_isManager && _isSupabaseChannel)
+        if (!preview && _isManager && _isSupabaseChannel)
           const PopupMenuItem(
               value: 'stats', child: Text('Participation stats')),
-        if (_knownCode != null)
+        if (!preview && _knownCode != null)
           const PopupMenuItem(value: 'share', child: Text('Share code')),
         if (_isSupabaseChannel && _myRole != 'owner')
           const PopupMenuItem(value: 'report', child: Text('Report channel')),
-        if (_isSupabaseChannel && _myRole != 'owner')
+        if (!preview && _isSupabaseChannel && _myRole != 'owner')
           const PopupMenuItem(
               value: 'leave',
               child: Text('Leave channel',
@@ -212,10 +218,11 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
         );
         break;
       case 'report':
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-                'Reports are reviewed by the iDecree team. (Reporting arrives '
-                'in the next update.)')));
+        await showReportDialog(
+          context,
+          state,
+          ReportTarget.channel(channelId: widget.circleId),
+        );
         break;
       case 'leave':
         final confirmed = await showDialog<bool>(
@@ -402,19 +409,27 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
                   ),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 18),
-                  child: Column(
+                  padding: const EdgeInsets.fromLTRB(24, 18, 12, 18),
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      QuoteTitleBody(text: quote.text),
-                      const SizedBox(height: 12),
-                      ReadCrowns(
-                        done: state.readsTodayFor(quote.id),
-                        target: quote.targetPerDay,
-                        dueLabel: dueLabelText(context, due),
-                        dueColor: dueLabelColor(due, c),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            QuoteTitleBody(text: quote.text),
+                            const SizedBox(height: 12),
+                            ReadCrowns(
+                              done: state.readsTodayFor(quote.id),
+                              target: quote.targetPerDay,
+                              dueLabel: dueLabelText(context, due),
+                              dueColor: dueLabelColor(due, c),
+                            ),
+                          ],
+                        ),
                       ),
+                      // Reminders are opt-in per decree.
+                      ReminderBellButton(quote: quote),
                     ],
                   ),
                 ),
@@ -432,6 +447,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => QuoteViewScreen.preview(
+            decreeId: d.id,
             quoteText: d.text,
             targetPerDay: d.targetPerDay,
             channelId: widget.circleId,

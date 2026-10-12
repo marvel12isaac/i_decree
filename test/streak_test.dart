@@ -1,5 +1,5 @@
 import 'package:i_decree/app_state.dart';
-import 'package:i_decree/services/circle_service.dart';
+// import 'package:i_decree/services/circle_service.dart';
 import 'package:i_decree/services/reminder_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,9 +11,9 @@ import 'package:i_decree/services/featured_quote_service.dart';
 Future<AppState> _newState(DateTime Function() clock) async {
   SharedPreferences.setMockInitialValues({});
   final prefs = await SharedPreferences.getInstance();
-  final circleService = CircleService(url: 'https://example.com/test.json', prefs: prefs);
+  // final circleService = CircleService(url: 'https://example.com/test.json', prefs: prefs);
   final featuredQuoteService = FeaturedQuoteService(url: featuredQuotesUrl, prefs: prefs);
-  final state = AppState(prefs, StubReminderService(), circleService, featuredQuoteService);
+  final state = AppState(prefs, StubReminderService(), featuredQuoteService);
   state.clock = clock;
   state.processMissedDays();
   return state;

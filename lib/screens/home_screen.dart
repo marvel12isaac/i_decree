@@ -11,6 +11,7 @@ import '../theme.dart';
 import '../widgets/due_time.dart';
 import '../widgets/read_crowns.dart';
 import '../widgets/sign_in_sheet.dart';
+import '../widgets/legacy_circles_prompt.dart';
 import 'channel_editor_screen.dart';
 import 'circle_quote_list_screen.dart';
 import 'quote_editor_screen.dart';
@@ -96,6 +97,10 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
     _loadDiscover();
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) maybeShowLegacyCirclesPrompt(context);
+      });
   }
 
   @override
@@ -379,9 +384,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             Icon(Icons.local_fire_department,
                                 size: 50, color: accent),
-                            // Text('streak',
-                            //     style:
-                            //         TextStyle(fontSize: 12, color: c.muted)),
                             Text('Best: $best',
                                 style:
                                     TextStyle(fontSize: 11, color: c.blue)),
@@ -401,10 +403,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                 color: accent,
                               ),
                             ),
-                            // const SizedBox(height: 1),
-                            // Text('Best: $best',
-                            //     style:
-                            //         TextStyle(fontSize: 13, color: c.blue)),
                           ],
                         ),
                       ],

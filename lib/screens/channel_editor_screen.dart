@@ -26,6 +26,7 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
   final _name = TextEditingController();
   final _description = TextEditingController();
   bool _isPublic = false; // agreed default: private, join with code
+  bool _timedReminders = true; // false = frequency only (no fixed times)
   final List<DecreeDraft> _decrees = [];
   bool _saving = false;
 
@@ -82,6 +83,7 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
         name: _name.text.trim(),
         description: _description.text.trim(),
         isPublic: _isPublic,
+        reminderMode: _timedReminders ? 'timed' : 'frequency',
       );
       await service.replaceDecrees(created.id, [
         for (final d in _decrees)
@@ -172,6 +174,16 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
                 : 'Join with code only'),
             value: _isPublic,
             onChanged: (v) => setState(() => _isPublic = v),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Remind at set times'),
+            subtitle: Text(_timedReminders
+                ? 'Members can turn on reminders at each decree\u2019s set times'
+                : 'No fixed times: members aim for the daily count and get one '
+                    'nudge a day'),
+            value: _timedReminders,
+            onChanged: (v) => setState(() => _timedReminders = v),
           ),
           const SizedBox(height: 8),
           Row(

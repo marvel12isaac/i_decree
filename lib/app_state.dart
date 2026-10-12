@@ -7,8 +7,8 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'legacy_circles.dart';
 import 'models.dart';
-import 'services/circle_service.dart';
 import 'services/reminder_service.dart';
 import 'services/featured_quote_service.dart';
 import 'services/backup_service.dart';
@@ -16,6 +16,9 @@ import 'services/channel_service.dart';
 import 'services/read_upload_service.dart';
 
 enum DueKind { overdue, upcoming, lastRead, none }
+
+/// Result of turning a channel decree's reminders on or off.
+enum ReminderToggle { on, off, limitReached }
 
 class DueInfo {
   DueInfo.overdue(this.minutes)
@@ -62,13 +65,11 @@ class AppState extends ChangeNotifier {
   AppState(
     this._prefs,
     this.reminders,
-    this.circleService,
     this.featuredQuoteService,
   );
 
   final SharedPreferences _prefs;
   final ReminderService reminders;
-  final CircleService circleService;
   final FeaturedQuoteService featuredQuoteService;
 
   /// Null until the user signs in; the sign-in sheet attaches it.
@@ -100,6 +101,21 @@ class AppState extends ChangeNotifier {
   final Random _featuredRandom = Random();
   Timer? _featuredTimer;
   static const Duration _featuredRotateEvery = Duration(minutes: 2);
+
+  // Channel decrees the user turned reminders on for. Opt-in per decree and
+  // stored on THIS device only: alarm limits are per device.
+  static const String _reminderOptInKey = 'channel_reminder_optins_v1';
+  final Set<String> _channelReminderOptIns = {};
+
+  /// Most reminder alarms this app will schedule at once. Android limits the
+  /// alarms an app can hold (commonly cited as about 500), so stay under it.
+  static const int maxScheduledReminders = 400;
+
+  // The old hosted-JSON circles moved to Supabase channels. These track the
+  // one-time "your circles moved" prompt.
+  static const String _legacyDoneKey = 'legacy_circles_prompt_done_v1';
+  static const String _legacyCacheKey = 'circle_cache_v1'; // old cache key
+  bool legacyPromptPending = false;
 
   // When channels were last refreshed because the app came to the front.
   DateTime? _lastResumeRefresh;
@@ -139,11 +155,9 @@ class AppState extends ChangeNotifier {
 
   static Future<AppState> load(ReminderService reminders) async {
     final prefs = await SharedPreferences.getInstance();
-    final circleService = CircleService(url: circleJsonUrl, prefs: prefs);
     final featuredQuoteService =
         FeaturedQuoteService(url: featuredQuotesUrl, prefs: prefs);
-    final state =
-        AppState(prefs, reminders, circleService, featuredQuoteService);
+    final state = AppState(prefs, reminders, featuredQuoteService);
     final raw = prefs.getString(_storageKey);
     if (raw != null) {
       try {
@@ -155,11 +169,9 @@ class AppState extends ChangeNotifier {
     state._loadThemeMode();
     state.processMissedDays();
 
-    // Show cached circle content immediately if we have any, then kick off
-    // a network refresh in the background without blocking startup.
-    final cached = circleService.loadCached();
-    if (cached != null) state._applyCircleData(cached, persist: false);
-    unawaited(state.refreshCircle());
+    // The old hosted-JSON circles now live in Supabase as channels: carry any
+    // read history over and work out whether to show the "moved" prompt.
+    state._migrateLegacyCircles();
 
     // Same idea for the featured-quotes card: show the cached set right
     // away, then refresh it in the background.
@@ -175,6 +187,7 @@ class AppState extends ChangeNotifier {
     // Joined Supabase channels: load the persisted ID list and the cached
     // channel content (so the feed shows right away, even offline), then
     // refresh from the server in the background.
+    state._loadReminderOptIns();
     state._loadJoinedIds();
     state._loadJoinedCache();
     // Signed in: restore everything tied to the account (personal backup,
@@ -450,6 +463,10 @@ class AppState extends ChangeNotifier {
           {
             'id': c.id,
             'name': c.name,
+            // Circle has no mode field of its own; its decrees carry it.
+            'reminderMode': (c.quotes.isNotEmpty && c.quotes.first.frequencyOnly)
+                ? 'frequency'
+                : 'timed',
             'quotes': [
               for (final q in c.quotes)
                 {
@@ -494,6 +511,7 @@ class AppState extends ChangeNotifier {
           name: m['name'] as String,
           description: '',
           quotes: quotes,
+          reminderMode: (m['reminderMode'] as String?) ?? 'timed',
         ));
       }
       _applyJoinedChannels(data, fromCache: true);
@@ -553,9 +571,10 @@ class AppState extends ChangeNotifier {
           targetPerDay: q.targetPerDay,
           windowStartMin: q.windowStartMin,
           windowEndMin: q.windowEndMin,
-          // Agreed: joining does NOT switch on reminders automatically —
-          // the user opts in per quote (challenges will rely on this).
-          remindersOn: false,
+          // Reminders are per-decree opt-in (alarm limits are per device), so
+          // every refresh keeps whatever the user chose.
+          remindersOn: _channelReminderOptIns.contains(q.id),
+          frequencyOnly: ch.reminderMode == 'frequency',
           isCircle: true,
           circleId: ch.id,
         ));
@@ -570,11 +589,105 @@ class AppState extends ChangeNotifier {
       }
     }
     if (!fromCache) {
+      // Forget reminder opt-ins for decrees that no longer exist.
+      final live = {
+        for (final c in _circles)
+          for (final q in c.quotes) q.id,
+      };
+      final before = _channelReminderOptIns.length;
+      _channelReminderOptIns.removeWhere((id) => !live.contains(id));
+      if (_channelReminderOptIns.length != before) {
+        unawaited(_saveReminderOptIns());
+      }
       unawaited(_saveJoinedCache());
       _save();
     }
     notifyListeners();
     if (!fromCache) syncReminders();
+  }
+
+  // ------------------------------------------------ channel decree reminders
+
+  void _loadReminderOptIns() {
+    _channelReminderOptIns
+      ..clear()
+      ..addAll(_prefs.getStringList(_reminderOptInKey) ?? const []);
+  }
+
+  Future<void> _saveReminderOptIns() =>
+      _prefs.setStringList(_reminderOptInKey, _channelReminderOptIns.toList());
+
+  /// How many reminder alarms are scheduled right now (personal decrees plus
+  /// channel decrees the user opted into).
+  int get reminderSlotsInUse {
+    var total = 0;
+    for (final q in [..._quotes, ...circleQuotes]) {
+      if (q.remindersOn) total += q.reminderMinutes().length;
+    }
+    return total;
+  }
+
+  /// Turns reminders on or off for ONE channel decree. Turning on is refused
+  /// when it would push the device past [maxScheduledReminders].
+  Future<ReminderToggle> setChannelReminder(String quoteId, bool on) async {
+    final q = quoteById(quoteId);
+    if (q == null || !q.isCircle) return ReminderToggle.off;
+    if (on) {
+      if (q.remindersOn) return ReminderToggle.on;
+      if (reminderSlotsInUse + q.reminderMinutes().length >
+          maxScheduledReminders) {
+        return ReminderToggle.limitReached;
+      }
+      await reminders.requestPermission();
+      _channelReminderOptIns.add(quoteId);
+      q.remindersOn = true;
+    } else {
+      _channelReminderOptIns.remove(quoteId);
+      q.remindersOn = false;
+    }
+    await _saveReminderOptIns();
+    notifyListeners();
+    await syncReminders();
+    return on ? ReminderToggle.on : ReminderToggle.off;
+  }
+
+  // ----------------------------------------------- legacy JSON circles move
+
+  /// One-time move of the old hosted-JSON circles to Supabase channels: any
+  /// read history for the old decree ids is carried over to the new ids, and
+  /// the "your circles moved" prompt is queued for people who had used them.
+  void _migrateLegacyCircles() {
+    var moved = false;
+    legacyQuoteIdMap.forEach((oldId, newId) {
+      final days = _reads.remove(oldId);
+      if (days != null) {
+        final target = _reads.putIfAbsent(newId, () => <String, int>{});
+        days.forEach((day, count) {
+          final existing = target[day] ?? 0;
+          target[day] = count > existing ? count : existing;
+        });
+        moved = true;
+      }
+      final last = _lastReadAt.remove(oldId);
+      if (last != null) {
+        final current = _lastReadAt[newId];
+        if (current == null || last.isAfter(current)) _lastReadAt[newId] = last;
+      }
+      final base = _circleNotifBase.remove(oldId);
+      if (base != null) _circleNotifBase.putIfAbsent(newId, () => base);
+    });
+    final done = _prefs.getBool(_legacyDoneKey) ?? false;
+    legacyPromptPending =
+        !done && (moved || _prefs.containsKey(_legacyCacheKey));
+    if (moved) _save(); // persist the renamed ids
+  }
+
+  /// The prompt was answered (or the user joined): never ask again, and drop
+  /// the old circle cache.
+  Future<void> completeLegacyPrompt() async {
+    legacyPromptPending = false;
+    await _prefs.setBool(_legacyDoneKey, true);
+    await _prefs.remove(_legacyCacheKey);
   }
 
   // ------------------------------------------------------ account restore
@@ -665,6 +778,12 @@ class AppState extends ChangeNotifier {
   Future<void> leaveChannel(String channelId) async {
     await _channelServiceForJoined.leave(channelId);
     _joinedChannelIds.remove(channelId);
+    // Its decrees' reminder opt-ins go with it.
+    final left = circleById(channelId);
+    if (left != null) {
+      _channelReminderOptIns.removeAll(left.quotes.map((q) => q.id));
+      await _saveReminderOptIns();
+    }
     // Drop it from the feed now. Refreshing only re-applies channels that
     // are still joined, so a left channel would otherwise linger.
     _circles.removeWhere((c) => c.id == channelId);
@@ -681,62 +800,6 @@ class AppState extends ChangeNotifier {
     _joinedChannelIds.add(channelId);
     await _saveJoinedIds();
     await refreshJoinedChannels();
-  }
-
-  // --------------------------------------------------------- static circles
-
-  /// Fetches the latest circle content and applies it if the fetch succeeds.
-  /// Safe to call repeatedly (e.g. a manual refresh button later).
-  Future<void> refreshCircle() async {
-    final data = await circleService.refresh();
-    if (data != null) _applyCircleData(data, persist: true);
-  }
-
-  void _applyCircleData(List<CircleData> data, {required bool persist}) {
-    // A decree id must be unique across all circles (reads and reminders
-    // are keyed by it), so a repeated id is skipped.
-    final seen = <String>{};
-    // Joined channels share this list: keep them when static circles reload
-    // (otherwise a slow circle fetch can wipe the feed at startup).
-    final joined = [
-      for (final c in _circles)
-        if (_joinedChannelIds.contains(c.id)) c,
-    ];
-    _circles
-      ..clear()
-      ..addAll(data.map((c) => Circle(
-            id: c.id,
-            name: c.name,
-            quotes: [
-              for (final q in c.quotes)
-                if (seen.add(q.id)) _circleQuoteFrom(q, c.id),
-            ],
-          )))
-      ..addAll(joined);
-    if (persist) _save();
-    notifyListeners();
-    syncReminders();
-  }
-
-    Quote _circleQuoteFrom(CircleQuoteData d, String circleId) {
-    var base = _circleNotifBase[d.id];
-    if (base == null) {
-      base = _nextNotifBase;
-      _nextNotifBase += Quote.maxPerDay + 8;
-      _circleNotifBase[d.id] = base;
-    }
-    return Quote(
-      id: d.id,
-      text: d.text,
-      notifBase: base,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-      targetPerDay: d.targetPerDay,
-      windowStartMin: d.windowStartMin,
-      windowEndMin: d.windowEndMin,
-      remindersOn: true,
-      isCircle: true,
-      circleId: circleId,
-    );
   }
 
   // ------------------------------------------------------------------ reads
@@ -829,6 +892,13 @@ class AppState extends ChangeNotifier {
   int unreadCount(Quote quote) {
     final now = clock();
     final minutesNow = now.hour * 60 + now.minute;
+    if (quote.frequencyOnly) {
+      // No fixed times: after the window opens, whatever is left of the
+      // daily count is "owed".
+      if (minutesNow < quote.windowStartMin) return 0;
+      final left = quote.targetPerDay - readsTodayFor(quote.id);
+      return left > 0 ? left : 0;
+    }
     final elapsed =
         quote.reminderMinutes().where((t) => t <= minutesNow).length;
     final remaining = elapsed - readsTodayFor(quote.id);
@@ -840,7 +910,8 @@ class AppState extends ChangeNotifier {
 
   DueInfo dueInfoFor(Quote quote) {
     final today = readsTodayFor(quote.id);
-    if (!quote.remindersOn) {
+    // Frequency-only decrees have no due times, just "last decreed".
+    if (!quote.remindersOn || quote.frequencyOnly) {
       final last = _lastReadAt[quote.id];
       return last != null ? DueInfo.lastReadAt(last) : DueInfo.none();
     }

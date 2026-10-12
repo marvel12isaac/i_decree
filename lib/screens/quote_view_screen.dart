@@ -6,6 +6,8 @@ import '../app_state.dart';
 import '../models.dart';
 import '../widgets/hold_to_read_button.dart';
 import '../widgets/quote_text.dart';
+import '../widgets/reminder_bell.dart';
+import '../widgets/report_dialog.dart';
 import '../theme.dart';
 import '../widgets/sign_in_sheet.dart';
 import 'quote_editor_screen.dart';
@@ -25,7 +27,8 @@ class QuoteViewScreen extends StatefulWidget {
         previewTarget = 1,
         previewChannelId = null,
         previewChannelName = null,
-        previewJoinCode = null;
+        previewJoinCode = null,
+        previewDecreeId = null;
 
   /// Preview of a channel decree the user hasn't joined yet.
   const QuoteViewScreen.preview({
@@ -35,12 +38,14 @@ class QuoteViewScreen extends StatefulWidget {
     required String channelId,
     required String channelName,
     String? joinCode,
+    String? decreeId,
   })  : quoteId = null,
         previewText = quoteText,
         previewTarget = targetPerDay,
         previewChannelId = channelId,
         previewChannelName = channelName,
-        previewJoinCode = joinCode;
+        previewJoinCode = joinCode,
+        previewDecreeId = decreeId;
 
   final String? quoteId;
 
@@ -49,6 +54,9 @@ class QuoteViewScreen extends StatefulWidget {
   final String? previewChannelId;
   final String? previewChannelName;
   final String? previewJoinCode;
+
+  /// The channel decree's server id, so a preview decree can be reported.
+  final String? previewDecreeId;
 
   @override
   State<QuoteViewScreen> createState() => _QuoteViewScreenState();
@@ -247,6 +255,26 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     );
   }
 
+  // --------------------------------------------------------------- report
+
+  ReportTarget? _reportTarget(Quote quote) {
+    if (_previewMode) {
+      final decreeId = widget.previewDecreeId;
+      final channelId = widget.previewChannelId;
+      if (decreeId == null || channelId == null) return null;
+      return ReportTarget.decree(channelId: channelId, quoteId: decreeId);
+    }
+    final channelId = quote.circleId;
+    if (channelId == null) return null;
+    return ReportTarget.decree(channelId: channelId, quoteId: quote.id);
+  }
+
+  Future<void> _report(Quote quote) async {
+    final target = _reportTarget(quote);
+    if (target == null) return;
+    await showReportDialog(context, AppScope.of(context), target);
+  }
+
   // ---------------------------------------------------------------- build
 
   @override
@@ -270,6 +298,8 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     return Scaffold(
       appBar: AppBar(
         actions: [
+          // Reminders are opt-in per decree (not for a not-yet-joined preview).
+          if (quote.isCircle && !_previewMode) ReminderBellButton(quote: quote),
           if (!quote.isCircle)
             IconButton(
               tooltip: 'Edit',
@@ -286,6 +316,13 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.playlist_add),
               onPressed: _joinBusy ? null : _addToMyDecrees,
+            ),
+          if (quote.isCircle && _reportTarget(quote) != null)
+            PopupMenuButton<String>(
+              onSelected: (_) => _report(quote),
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'report', child: Text('Report this decree')),
+              ],
             ),
         ],
       ),
