@@ -378,10 +378,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.local_fire_department,
-                                size: 48, color: accent),
-                            Text('streak',
+                                size: 50, color: accent),
+                            // Text('streak',
+                            //     style:
+                            //         TextStyle(fontSize: 12, color: c.muted)),
+                            Text('Best: $best',
                                 style:
-                                    TextStyle(fontSize: 12, color: c.muted)),
+                                    TextStyle(fontSize: 11, color: c.blue)),
                           ],
                         ),
                         const SizedBox(width: 14),
@@ -392,16 +395,16 @@ class _HomeScreenState extends State<HomeScreen> {
                             Text(
                               '$streak',
                               style: TextStyle(
-                                fontSize: 46,
+                                fontSize: 56,
                                 height: 1,
                                 fontWeight: FontWeight.w700,
                                 color: accent,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            Text('Best: $best',
-                                style:
-                                    TextStyle(fontSize: 13, color: c.blue)),
+                            // const SizedBox(height: 1),
+                            // Text('Best: $best',
+                            //     style:
+                            //         TextStyle(fontSize: 13, color: c.blue)),
                           ],
                         ),
                       ],
