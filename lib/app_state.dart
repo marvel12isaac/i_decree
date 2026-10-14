@@ -9,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'legacy_circles.dart';
 import 'models.dart';
+import 'widgets/toast.dart';
 import 'services/reminder_service.dart';
 import 'services/featured_quote_service.dart';
 import 'services/backup_service.dart';
@@ -107,6 +108,11 @@ class AppState extends ChangeNotifier {
   static const String _reminderOptInKey = 'channel_reminder_optins_v1';
   final Set<String> _channelReminderOptIns = {};
 
+  // The user's role in each joined channel ('owner' / 'admin' / 'member'),
+  // cached with the channel data so buttons that depend on it (add, edit)
+  // are right from the first frame instead of flashing in.
+  final Map<String, String> _channelRoles = {};
+
   /// Most reminder alarms this app will schedule at once. Android limits the
   /// alarms an app can hold (commonly cited as about 500), so stay under it.
   static const int maxScheduledReminders = 400;
@@ -147,6 +153,16 @@ class AppState extends ChangeNotifier {
   bool get isSignedIn => Supabase.instance.client.auth.currentUser != null;
 
   bool isMemberOf(String channelId) => _joinedChannelIds.contains(channelId);
+
+  /// The user's cached role in a joined channel, or null if not known yet.
+  String? roleFor(String channelId) => _channelRoles[channelId];
+
+  /// Remembers a role a screen just looked up.
+  void cacheRole(String channelId, String role) {
+    if (!isMemberOf(channelId) || _channelRoles[channelId] == role) return;
+    _channelRoles[channelId] = role;
+    unawaited(_saveJoinedCache());
+  }
 
   /// True when this device knows of at least one joined channel.
   bool get hasJoinedChannels => _joinedChannelIds.isNotEmpty;
@@ -463,6 +479,7 @@ class AppState extends ChangeNotifier {
           {
             'id': c.id,
             'name': c.name,
+            'role': _channelRoles[c.id],
             // Circle has no mode field of its own; its decrees carry it.
             'reminderMode': (c.quotes.isNotEmpty && c.quotes.first.frequencyOnly)
                 ? 'frequency'
@@ -493,6 +510,8 @@ class AppState extends ChangeNotifier {
         final m = item as Map<String, dynamic>;
         final id = m['id'] as String;
         if (!_joinedChannelIds.contains(id)) continue; // left since caching
+        final role = m['role'] as String?;
+        if (role != null) _channelRoles[id] = role;
         final rawQuotes = m['quotes'] as List<dynamic>? ?? const [];
         final quotes = <JoinedQuoteData>[];
         for (var i = 0; i < rawQuotes.length; i++) {
@@ -527,10 +546,12 @@ class AppState extends ChangeNotifier {
   Future<void> refreshJoinedChannels() async {
     if (isSignedIn) {
       try {
-        final serverIds =
-            await _channelServiceForJoined.fetchMyMembershipIds();
+        final roles = await _channelServiceForJoined.fetchMyMembershipRoles();
+        _channelRoles
+          ..clear()
+          ..addAll(roles);
         final before = _joinedChannelIds.length;
-        _joinedChannelIds.addAll(serverIds);
+        _joinedChannelIds.addAll(roles.keys);
         if (_joinedChannelIds.length != before) await _saveJoinedIds();
       } catch (e) {
         debugPrint('Membership sync failed (using local list): $e');
@@ -764,6 +785,7 @@ class AppState extends ChangeNotifier {
     _joinedChannelIds.add(joined.id);
     await _saveJoinedIds();
     await refreshJoinedChannels();
+    showToast('Joined ${joined.name}.');
   }
 
   /// Joins a public channel from the channel list screen. Requires sign-in.
@@ -772,12 +794,15 @@ class AppState extends ChangeNotifier {
     _joinedChannelIds.add(channelId);
     await _saveJoinedIds();
     await refreshJoinedChannels();
+    showToast('Joined ${circleById(channelId)?.name ?? 'the channel'}.');
   }
 
   /// Leaves a channel (owners are refused server-side).
-  Future<void> leaveChannel(String channelId) async {
+  Future<void> leaveChannel(String channelId, {bool announce = true}) async {
+    final leftName = circleById(channelId)?.name;
     await _channelServiceForJoined.leave(channelId);
     _joinedChannelIds.remove(channelId);
+    _channelRoles.remove(channelId);
     // Its decrees' reminder opt-ins go with it.
     final left = circleById(channelId);
     if (left != null) {
@@ -792,6 +817,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     await syncReminders();
     await refreshJoinedChannels();
+    if (announce) showToast('You left ${leftName ?? 'the channel'}.');
   }
 
   /// Called right after create_channel succeeds: the server already made
@@ -905,8 +931,54 @@ class AppState extends ChangeNotifier {
     return remaining > 0 ? remaining : 0;
   }
 
-  int unreadCountFor(List<Quote> quotes) =>
-      quotes.fold(0, (sum, q) => sum + unreadCount(q));
+  /// The number on a channel's pill: reads that are due now but not done,
+  /// counting only decrees that have reminders on. It goes up as more reads
+  /// fall due and down as they are read. (5 decrees at 2 reads each is at
+  /// most 10, once every read is due.)
+  int unreadCountFor(List<Quote> quotes) => quotes
+      .where((q) => q.remindersOn)
+      .fold(0, (sum, q) => sum + unreadCount(q));
+
+  /// Joined channels in Home order. Channels with a read due now come first:
+  /// the most recently due on top, the longest-waiting at the bottom of that
+  /// group. Then channels with a next due time, soonest first. Then channels
+  /// decreed most recently, then the rest. Reading updates a channel's pill and
+  /// status at once, and a channel with nothing due now drops below the ones
+  /// that still have something due.
+  List<Circle> channelsByDue() {
+    final infos = {for (final c in _circles) c.id: spaceDueInfo(c.quotes)};
+    int rank(DueKind kind) {
+      switch (kind) {
+        case DueKind.overdue:
+          return 0;
+        case DueKind.upcoming:
+          return 1;
+        case DueKind.lastRead:
+          return 2;
+        case DueKind.none:
+          return 3;
+      }
+    }
+
+    final sorted = [..._circles];
+    sorted.sort((a, b) {
+      final da = infos[a.id]!;
+      final db = infos[b.id]!;
+      final byRank = rank(da.kind).compareTo(rank(db.kind));
+      if (byRank != 0) return byRank;
+      var cmp = 0;
+      if (da.kind == DueKind.overdue) {
+        cmp = db.minutes!.compareTo(da.minutes!); // most recently due first
+      } else if (da.kind == DueKind.upcoming) {
+        cmp = da.minutes!.compareTo(db.minutes!); // soonest next due first
+      } else if (da.kind == DueKind.lastRead) {
+        cmp = db.lastRead!.compareTo(da.lastRead!); // decreed most recently
+      }
+      if (cmp != 0) return cmp;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return sorted;
+  }
 
   DueInfo dueInfoFor(Quote quote) {
     final today = readsTodayFor(quote.id);

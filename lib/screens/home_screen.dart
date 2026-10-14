@@ -646,30 +646,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Channels sorted chat-style: the one with the most imminent decree on
   /// top — overdue first (longest-waiting slot first), then upcoming
   /// (soonest first), then recently decreed, then the rest.
-  List<Circle> _channelsSorted(AppState state) {
-    int rank(DueKind k) {
-      switch (k) {
-        case DueKind.overdue:
-          return 0;
-        case DueKind.upcoming:
-          return 1;
-        case DueKind.lastRead:
-          return 2;
-        case DueKind.none:
-          return 3;
-      }
-    }
-
-    final sorted = [...state.circles];
-    sorted.sort((a, b) {
-      final da = state.spaceDueInfo(a.quotes);
-      final db = state.spaceDueInfo(b.quotes);
-      final r = rank(da.kind).compareTo(rank(db.kind));
-      if (r != 0) return r;
-      return (da.minutes ?? 0).compareTo(db.minutes ?? 0);
-    });
-    return sorted;
-  }
+  List<Circle> _channelsSorted(AppState state) => state.channelsByDue();
 
   /// One joined channel's Home row: avatar, name, first-decree preview, and
   /// the combined due/next/last-decreed status with unread badge on the

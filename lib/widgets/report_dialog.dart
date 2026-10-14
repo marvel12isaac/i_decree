@@ -29,6 +29,13 @@ Future<bool> showReportDialog(
   AppState state,
   ReportTarget target,
 ) async {
+  // Only members can report (the database enforces this too).
+  if (state.isSignedIn && !state.isMemberOf(target.channelId)) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Join this channel to report it.')),
+    );
+    return false;
+  }
   if (!state.isSignedIn) {
     final ok =
         await showSignInSheet(context, state, title: 'Sign in to report.');
@@ -81,13 +88,32 @@ class _ReportDialogState extends State<_ReportDialog> {
       _error = null;
     });
     try {
-      await ChannelService(Supabase.instance.client).fileReport(
+      final outcome = await ChannelService(Supabase.instance.client).fileReport(
         channelId: widget.target.channelId,
         quoteId: widget.target.quoteId,
         reason: _reason,
         comment: _comment.text,
       );
-      if (mounted) Navigator.of(context).pop(true);
+      if (!mounted) return;
+      switch (outcome) {
+        case ReportOutcome.sent:
+          Navigator.of(context).pop(true);
+          break;
+        case ReportOutcome.alreadyReported:
+          setState(() {
+            _busy = false;
+            _error = widget.target.isDecree
+                ? 'You\u2019ve already reported this decree.'
+                : 'You\u2019ve already reported this channel.';
+          });
+          break;
+        case ReportOutcome.limitReached:
+          setState(() {
+            _busy = false;
+            _error = 'You\u2019ve reached the report limit for this channel.';
+          });
+          break;
+      }
     } catch (e) {
       debugPrint('Report failed: $e');
       if (mounted) {

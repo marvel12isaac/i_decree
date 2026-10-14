@@ -8,6 +8,7 @@ import 'screens/home_screen.dart';
 import 'screens/quote_view_screen.dart';
 import 'services/reminder_service.dart';
 import 'theme.dart';
+import 'widgets/toast.dart';
 // import 'services/auth_service.dart';
 
 Future<void> main() async {
@@ -101,6 +102,7 @@ class _IDecreeAppState extends State<IDecreeApp>
           title: 'iDecree',
           debugShowCheckedModeBanner: false,
           navigatorKey: _navigatorKey,
+          scaffoldMessengerKey: rootMessengerKey,
           theme: _lightTheme,
           darkTheme: _darkTheme,
           themeMode: widget.state.themeMode,

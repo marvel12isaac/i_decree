@@ -13,6 +13,7 @@ import '../widgets/reminder_bell.dart';
 import '../widgets/report_dialog.dart';
 import '../widgets/sign_in_sheet.dart';
 import 'channel_settings_screen.dart';
+import 'quote_editor_screen.dart';
 import 'quote_view_screen.dart';
 
 /// One channel's decree list — the single channel screen.
@@ -60,6 +61,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
 
   // Role, for the overflow menu. 'member' for static circles.
   String _myRole = 'member';
+  bool _roleKnown = false; // true once the role is cached or looked up
   String? _knownCode;
 
   static final _uuidRe =
@@ -90,13 +92,51 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     try {
       final role = await service.fetchMyRole(widget.circleId);
       if (!mounted) return;
-      setState(() => _myRole = role);
+      setState(() {
+        _myRole = role;
+        _roleKnown = true;
+      });
+      AppScope.of(context).cacheRole(widget.circleId, role);
     } catch (_) {}
     try {
       final s = await service.fetchSummary(widget.circleId);
       if (!mounted || s == null) return;
       setState(() => _knownCode = s.joinCode);
     } catch (_) {}
+  }
+
+  /// Managers add a decree to the channel from this list.
+  Future<void> _addDecree() async {
+    final state = AppScope.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final count = state.circleById(widget.circleId)?.quotes.length ?? 0;
+    if (count >= 33) {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('A channel can have up to 33 decrees.')));
+      return;
+    }
+    final draft = await Navigator.of(context).push<DecreeDraft>(
+      MaterialPageRoute(builder: (_) => const QuoteEditorScreen.draft()),
+    );
+    if (draft == null || !mounted) return;
+    try {
+      await ChannelService(Supabase.instance.client).addDecree(
+        widget.circleId,
+        text: draft.text,
+        targetPerDay: draft.targetPerDay,
+        windowStartMin: draft.windowStartMin,
+        windowEndMin: draft.windowEndMin,
+        position: count,
+      );
+      await state.refreshJoinedChannels();
+      messenger.showSnackBar(const SnackBar(content: Text('Decree added.')));
+      _fetchCounts(); // the header's decree count changed
+    } catch (e) {
+      debugPrint('Could not add decree: $e');
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not add the decree. Try again.')),
+      );
+    }
   }
 
   @override
@@ -108,6 +148,16 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     final inFeed = circle != null;
     final preview =
         widget.isChannelPreview && !state.isMemberOf(widget.circleId);
+
+    // A cached role means the add button is right from the first frame.
+    if (!_roleKnown) {
+      final cached = state.roleFor(widget.circleId);
+      if (cached != null) {
+        _myRole = cached;
+        _roleKnown = true;
+      }
+    }
+    final canAdd = !preview && _roleKnown && _isManager && _isSupabaseChannel;
 
     if (preview &&
         _previewDecrees == null &&
@@ -131,6 +181,13 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
 
     return Scaffold(
       backgroundColor: c.background,
+      floatingActionButton: canAdd
+          ? FloatingActionButton(
+              tooltip: 'Add a decree',
+              onPressed: _addDecree,
+              child: const Icon(Icons.add),
+            )
+          : null,
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -141,7 +198,14 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
           ],
         ),
         actions: [
-          _buildMenu(context, state, preview: preview),
+          if (canAdd)
+            IconButton(
+              tooltip: 'Add a decree',
+              icon: const Icon(Icons.add),
+              onPressed: _addDecree,
+            ),
+          // Non-members get no menu: they can't report or manage anything.
+          if (!preview) _buildMenu(context, state),
         ],
       ),
       body: Column(
@@ -156,24 +220,20 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
 
   // ----------------------------------------------------------------- menu
 
-  Widget _buildMenu(
-    BuildContext context,
-    AppState state, {
-    required bool preview,
-  }) {
+  Widget _buildMenu(BuildContext context, AppState state) {
     return PopupMenuButton<String>(
       onSelected: (value) => _onMenu(value, state),
       itemBuilder: (context) => [
-        if (!preview && _isManager && _isSupabaseChannel)
+        if (_isManager && _isSupabaseChannel)
           const PopupMenuItem(value: 'settings', child: Text('Channel settings')),
-        if (!preview && _isManager && _isSupabaseChannel)
+        if (_isManager && _isSupabaseChannel)
           const PopupMenuItem(
               value: 'stats', child: Text('Participation stats')),
-        if (!preview && _knownCode != null)
+        if (_knownCode != null)
           const PopupMenuItem(value: 'share', child: Text('Share code')),
         if (_isSupabaseChannel && _myRole != 'owner')
           const PopupMenuItem(value: 'report', child: Text('Report channel')),
-        if (!preview && _isSupabaseChannel && _myRole != 'owner')
+        if (_isSupabaseChannel && _myRole != 'owner')
           const PopupMenuItem(
               value: 'leave',
               child: Text('Leave channel',
@@ -396,7 +456,8 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
             ),
           )
         : ListView.separated(
-            padding: const EdgeInsets.only(bottom: 24),
+            // Extra room under the last row so the add button doesn't cover it.
+            padding: EdgeInsets.only(bottom: _isManager ? 88 : 24),
             itemCount: quotes.length,
             separatorBuilder: (_, __) => const Divider(),
             itemBuilder: (context, i) {
@@ -447,7 +508,6 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => QuoteViewScreen.preview(
-            decreeId: d.id,
             quoteText: d.text,
             targetPerDay: d.targetPerDay,
             channelId: widget.circleId,

@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_state.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
+import '../widgets/toast.dart';
 import 'channel_edit_decrees_screen.dart';
 import 'channel_stats_screen.dart';
 
@@ -249,6 +250,9 @@ class _ChannelSettingsScreenState extends State<ChannelSettingsScreen> {
     try {
       await _service.setRole(widget.channelId, m.userId, role);
       await _load();
+      showToast(role == 'admin'
+          ? '${m.displayName} is now an admin.'
+          : '${m.displayName} is no longer an admin.');
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -339,9 +343,11 @@ class _ChannelSettingsScreenState extends State<ChannelSettingsScreen> {
     try {
       await _service.deleteChannel(widget.channelId);
       if (!mounted) return;
-      await AppScope.of(context).leaveChannel(widget.channelId);
+      await AppScope.of(context)
+          .leaveChannel(widget.channelId, announce: false);
       if (!mounted) return;
       _popToHome();
+      showToast('Channel deleted.');
     } catch (e) {
       if (!mounted) return;
       _showDeleteFailed();

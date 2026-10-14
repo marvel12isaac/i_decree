@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../legacy_circles.dart';
 import 'sign_in_sheet.dart';
+import 'toast.dart';
 
 /// One-time prompt for people who used the old hosted-JSON circles: they are
 /// now Supabase channels, so offer to join them (signing in if needed). Their
@@ -70,5 +71,6 @@ Future<void> maybeShowLegacyCirclesPrompt(BuildContext context) async {
     );
     return;
   }
+  showToast('Joined ${names.join(' and ')}.');
   await state.completeLegacyPrompt();
 }

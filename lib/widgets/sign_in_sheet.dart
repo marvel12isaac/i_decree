@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_state.dart';
 import '../services/auth_service.dart';
 import '../theme.dart';
+import 'toast.dart';
 
 /// What signing in gets the user. Shown as a short checklist on the sheet.
 const _benefits = [
@@ -65,6 +66,7 @@ class _SignInSheetState extends State<_SignInSheet> {
       // and bring back channel memberships and content. ---
       await widget.state.restoreAccountData();
 
+      showToast('Signed in.');
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       // The full error goes to the log; the user sees a plain message.

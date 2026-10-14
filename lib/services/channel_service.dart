@@ -176,6 +176,9 @@ class DecreeStat {
   final int partial;
 }
 
+/// What happened when a report was filed.
+enum ReportOutcome { sent, alreadyReported, limitReached }
+
 class ChannelService {
   ChannelService(this._client);
 
@@ -331,6 +334,20 @@ class ChannelService {
 
   /// The signed-in user's role in a channel: owner/admin/member, or
   /// 'none' when not a member.
+  /// The user's role in every channel they belong to (channel id -> 'owner',
+  /// 'admin' or 'member'). The app caches this so role-dependent buttons are
+  /// right from the first frame.
+  Future<Map<String, String>> fetchMyMembershipRoles() async {
+    final rows = await _client
+        .from('channel_memberships')
+        .select('channel_id, role')
+        .eq('user_id', _client.auth.currentUser!.id);
+    return {
+      for (final r in rows)
+        r['channel_id'] as String: (r['role'] as String?) ?? 'member',
+    };
+  }
+
   Future<String> fetchMyRole(String channelId) async {
     final uid = _client.auth.currentUser?.id;
     if (uid == null) return 'none';
@@ -460,6 +477,45 @@ class ChannelService {
     return res as String;
   }
 
+  /// Adds ONE decree to a channel, at [position] (0-based). Managers only
+  /// (RLS enforces).
+  Future<void> addDecree(
+    String channelId, {
+    required String text,
+    required int targetPerDay,
+    required int windowStartMin,
+    required int windowEndMin,
+    required int position,
+  }) async {
+    await _client.from('channel_quotes').insert({
+      'channel_id': channelId,
+      'text': text,
+      'target_per_day': targetPerDay,
+      'window_start_min': windowStartMin,
+      'window_end_min': windowEndMin,
+      'position': position,
+    });
+  }
+
+  /// Updates ONE channel decree in place. Its id stays the same, so members'
+  /// read history and reminder choices for it are kept. Managers only (RLS
+  /// enforces).
+  Future<void> updateDecree(
+    String quoteId, {
+    required String text,
+    required int targetPerDay,
+    required int windowStartMin,
+    required int windowEndMin,
+  }) async {
+    await _client.from('channel_quotes').update({
+      'text': text,
+      'target_per_day': targetPerDay,
+      'window_start_min': windowStartMin,
+      'window_end_min': windowEndMin,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', quoteId);
+  }
+
   /// Sets how reminders work in a channel: 'timed' or 'frequency'.
   /// Managers only (RLS enforces).
   Future<void> updateReminderMode(String channelId, String mode) async {
@@ -473,8 +529,10 @@ class ChannelService {
 
   /// Files a report about a channel, or about one of its decrees when
   /// [quoteId] is given. [reason] is 'spam', 'inappropriate' or 'other'.
-  /// Needs a signed-in user. Reporters can write but not read reports.
-  Future<void> fileReport({
+  /// Needs a signed-in channel member. The database enforces the limits: one
+  /// report per person per decree (and per channel), and no more reports in a
+  /// channel than it has decrees. Reporters can write but not read reports.
+  Future<ReportOutcome> fileReport({
     required String channelId,
     String? quoteId,
     required String reason,
@@ -483,13 +541,22 @@ class ChannelService {
     final uid = _client.auth.currentUser?.id;
     if (uid == null) throw StateError('Sign in to report.');
     final trimmed = comment?.trim();
-    await _client.from('reports').insert({
-      'channel_id': channelId,
-      'quote_id': quoteId,
-      'reporter_id': uid,
-      'reason': reason,
-      'comment': (trimmed == null || trimmed.isEmpty) ? null : trimmed,
-    });
+    try {
+      await _client.from('reports').insert({
+        'channel_id': channelId,
+        'quote_id': quoteId,
+        'reporter_id': uid,
+        'reason': reason,
+        'comment': (trimmed == null || trimmed.isEmpty) ? null : trimmed,
+      });
+      return ReportOutcome.sent;
+    } on PostgrestException catch (e) {
+      // 23505 = unique violation (already reported this).
+      if (e.code == '23505') return ReportOutcome.alreadyReported;
+      // 42501 = row-level security refused: not a member, or over the cap.
+      if (e.code == '42501') return ReportOutcome.limitReached;
+      rethrow;
+    }
   }
 
   /// Deletes a channel (owner only — RLS enforces).
