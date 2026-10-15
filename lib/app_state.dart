@@ -480,10 +480,6 @@ class AppState extends ChangeNotifier {
             'id': c.id,
             'name': c.name,
             'role': _channelRoles[c.id],
-            // Circle has no mode field of its own; its decrees carry it.
-            'reminderMode': (c.quotes.isNotEmpty && c.quotes.first.frequencyOnly)
-                ? 'frequency'
-                : 'timed',
             'quotes': [
               for (final q in c.quotes)
                 {
@@ -530,7 +526,6 @@ class AppState extends ChangeNotifier {
           name: m['name'] as String,
           description: '',
           quotes: quotes,
-          reminderMode: (m['reminderMode'] as String?) ?? 'timed',
         ));
       }
       _applyJoinedChannels(data, fromCache: true);
@@ -595,7 +590,6 @@ class AppState extends ChangeNotifier {
           // Reminders are per-decree opt-in (alarm limits are per device), so
           // every refresh keeps whatever the user chose.
           remindersOn: _channelReminderOptIns.contains(q.id),
-          frequencyOnly: ch.reminderMode == 'frequency',
           isCircle: true,
           circleId: ch.id,
         ));
@@ -670,6 +664,52 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     await syncReminders();
     return on ? ReminderToggle.on : ReminderToggle.off;
+  }
+
+  // ------------------------------------------------------- bell hint
+
+  static const String bellHint =
+      'Tap a decree\u2019s bell to be reminded at its set time.';
+  static const String _bellHintKey = 'channel_bell_hint_shown_v1';
+
+  /// Shows [bellHint] the first time a member opens a channel's decree list
+  /// (once per channel, on this device). Skipped when a bell is already on.
+  Future<void> showBellHintOnce(String channelId) async {
+    final shown = _prefs.getStringList(_bellHintKey) ?? const <String>[];
+    if (shown.contains(channelId)) return;
+    await _prefs.setStringList(_bellHintKey, [...shown, channelId]);
+    final circle = circleById(channelId);
+    if (circle == null || circle.quotes.any((q) => q.remindersOn)) return;
+    showToast(bellHint);
+  }
+
+  /// Turns the bell on for every decree in [channelIds], stopping short of
+  /// [maxScheduledReminders]. Returns how many decrees were left off because
+  /// of the limit. Used for people moving over from the old JSON circles.
+  Future<int> enableRemindersForChannels(Set<String> channelIds) async {
+    var skipped = 0;
+    var changed = false;
+    for (final c in _circles) {
+      if (!channelIds.contains(c.id)) continue;
+      for (final q in c.quotes) {
+        if (q.remindersOn) continue;
+        if (reminderSlotsInUse + q.reminderMinutes().length >
+            maxScheduledReminders) {
+          skipped++;
+          continue;
+        }
+        _channelReminderOptIns.add(q.id);
+        q.remindersOn = true;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await reminders.requestPermission();
+      await _saveReminderOptIns();
+      notifyListeners();
+      await syncReminders();
+    }
+    return skipped;
   }
 
   // ----------------------------------------------- legacy JSON circles move
@@ -785,7 +825,7 @@ class AppState extends ChangeNotifier {
     _joinedChannelIds.add(joined.id);
     await _saveJoinedIds();
     await refreshJoinedChannels();
-    showToast('Joined ${joined.name}.');
+    showToast('Joined ${joined.name}. $bellHint');
   }
 
   /// Joins a public channel from the channel list screen. Requires sign-in.
@@ -794,7 +834,8 @@ class AppState extends ChangeNotifier {
     _joinedChannelIds.add(channelId);
     await _saveJoinedIds();
     await refreshJoinedChannels();
-    showToast('Joined ${circleById(channelId)?.name ?? 'the channel'}.');
+    showToast(
+        'Joined ${circleById(channelId)?.name ?? 'the channel'}. $bellHint');
   }
 
   /// Leaves a channel (owners are refused server-side).
@@ -918,13 +959,6 @@ class AppState extends ChangeNotifier {
   int unreadCount(Quote quote) {
     final now = clock();
     final minutesNow = now.hour * 60 + now.minute;
-    if (quote.frequencyOnly) {
-      // No fixed times: after the window opens, whatever is left of the
-      // daily count is "owed".
-      if (minutesNow < quote.windowStartMin) return 0;
-      final left = quote.targetPerDay - readsTodayFor(quote.id);
-      return left > 0 ? left : 0;
-    }
     final elapsed =
         quote.reminderMinutes().where((t) => t <= minutesNow).length;
     final remaining = elapsed - readsTodayFor(quote.id);
@@ -981,16 +1015,15 @@ class AppState extends ChangeNotifier {
   }
 
   DueInfo dueInfoFor(Quote quote) {
+    // Status comes from the schedule for EVERY decree, whether or not its
+    // bell is on (the bell only controls notifications). It is never blank:
+    // a decree always has a due time, a next time, or, once every read for
+    // today is done, a "last decreed" time (so a stale one from an earlier
+    // day can't show).
     final today = readsTodayFor(quote.id);
-    // Frequency-only decrees have no due times, just "last decreed".
-    if (!quote.remindersOn || quote.frequencyOnly) {
-      final last = _lastReadAt[quote.id];
-      return last != null ? DueInfo.lastReadAt(last) : DueInfo.none();
-    }
     final times = quote.reminderMinutes();
     if (today >= times.length) {
-      final last = _lastReadAt[quote.id];
-      return last != null ? DueInfo.lastReadAt(last) : DueInfo.none();
+      return DueInfo.lastReadAt(_lastReadAt[quote.id] ?? clock());
     }
     final now = clock();
     final nowMin = now.hour * 60 + now.minute;

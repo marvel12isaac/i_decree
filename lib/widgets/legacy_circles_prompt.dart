@@ -71,6 +71,17 @@ Future<void> maybeShowLegacyCirclesPrompt(BuildContext context) async {
     );
     return;
   }
-  showToast('Joined ${names.join(' and ')}.');
+
+  // These readers were already being reminded under the old circles, so turn
+  // the bells on for the migrated decrees (up to the device's alarm limit).
+  final skipped = await state.enableRemindersForChannels(
+    legacyCircleChannels.values.map((c) => c.channelId).toSet(),
+  );
+  final joined = 'Joined ${names.join(' and ')}.';
+  final inUse = state.reminderSlotsInUse;
+  showToast(skipped > 0
+      ? '$joined Reminders on for most decrees \u00b7 $inUse a day in total. '
+          'The device limit was reached.'
+      : '$joined Reminders on \u00b7 $inUse a day in total.');
   await state.completeLegacyPrompt();
 }

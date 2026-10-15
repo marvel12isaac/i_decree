@@ -44,6 +44,19 @@ class MobileReminderService implements ReminderService {
     ),
   );
 
+  // Channel decrees get their own Android notification category, so people
+  // can mute or tune channel reminders separately from their personal ones.
+  static const NotificationDetails _channelDetails = NotificationDetails(
+    android: AndroidNotificationDetails(
+      'channel_reminders',
+      'Channel reminders',
+      channelDescription: 'Reminders for decrees in your channels',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: 'ic_stat_idecree',
+    ),
+  );
+
   @override
   bool get supported => true;
 
@@ -166,7 +179,7 @@ class MobileReminderService implements ReminderService {
             title: _title(q.text),            
             body: _preview(q.text),
             scheduledDate: _nextOccurrence(times[i]),
-            notificationDetails: _details,
+            notificationDetails: q.isCircle ? _channelDetails : _details,
             androidScheduleMode: mode,
             matchDateTimeComponents: DateTimeComponents.time,
             payload: q.id,

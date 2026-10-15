@@ -78,6 +78,13 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     });
     _maybeLoadPreview();
     _loadRoleAndCode();
+    // First time a member opens this channel's list: point at the bell.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final state = AppScope.of(context);
+      if (!state.isMemberOf(widget.circleId)) return;
+      state.showBellHintOnce(widget.circleId);
+    });
   }
 
   @override

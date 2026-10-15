@@ -15,7 +15,6 @@ class Quote {
     this.updatedAt,
     this.isCircle = false,
     this.circleId,
-    this.frequencyOnly = false,
     this.unreadCount = 0,
     this.unreadCountFor = 0,
   });
@@ -48,10 +47,6 @@ class Quote {
   final bool isCircle;
   final String? circleId;
 
-  /// True for a channel decree whose channel is "frequency only": no fixed
-  /// reminder times, just a daily count and one nudge a day.
-  final bool frequencyOnly;
-
   static const int maxPerDay = 24;
   int unreadCount;
   int unreadCountFor;
@@ -59,8 +54,6 @@ class Quote {
   /// Evenly spaced reminder times (minutes from midnight) across the window.
   /// One reminder a day fires at the window start.
   List<int> reminderMinutes() {
-    // Frequency-only channels: a single daily nudge at the window start.
-    if (frequencyOnly) return [windowStartMin];
     final n = targetPerDay.clamp(1, maxPerDay).toInt();
     if (n == 1 || windowEndMin <= windowStartMin) return [windowStartMin];
     final step = (windowEndMin - windowStartMin) / (n - 1);

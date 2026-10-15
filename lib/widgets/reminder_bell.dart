@@ -13,7 +13,8 @@ Future<void> toggleChannelReminder(BuildContext context, Quote quote) async {
   final messenger = ScaffoldMessenger.of(context);
   final result = await state.setChannelReminder(quote.id, !quote.remindersOn);
   if (result == ReminderToggle.on) {
-    showToast('Reminders on for this decree.');
+    showToast(
+        'Reminders on \u00b7 ${state.reminderSlotsInUse} a day in total');
   } else if (result == ReminderToggle.off) {
     showToast('Reminders off for this decree.');
   }
