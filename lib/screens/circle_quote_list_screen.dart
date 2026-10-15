@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../models.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
+import '../widgets/share_invite.dart';
 import '../widgets/due_time.dart';
 import '../widgets/quote_text.dart';
 import '../widgets/read_crowns.dart';
@@ -270,18 +271,12 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       case 'share':
         final code = _knownCode;
         if (code == null) break;
-        await showDialog<void>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Share code'),
-            content: Text(
-                'Invite people: search this code in the app — $code'),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Done')),
-            ],
-          ),
+        await showShareInviteSheet(
+          context,
+          channelName: widget.channelName ??
+              state.circleById(widget.circleId)?.name ??
+              'this channel',
+          joinCode: code,
         );
         break;
       case 'report':

@@ -17,6 +17,7 @@ import 'circle_quote_list_screen.dart';
 import 'quote_editor_screen.dart';
 import 'quote_list_screen.dart';
 import 'quote_view_screen.dart';
+import 'settings_screen.dart';
 import 'streak_calendar_screen.dart';
 
 const _weekdayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -333,14 +334,50 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           Align(
             alignment: Alignment.centerRight,
-            child: IconButton(
-              tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
-              icon: Icon(
-                isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-              ),
-              onPressed: () => state.setThemeMode(
-                isDark ? ThemeMode.light : ThemeMode.dark,
-              ),
+            child: PopupMenuButton<String>(
+              tooltip: 'Menu',
+              icon: const Icon(Icons.more_vert),
+              onSelected: (value) {
+                switch (value) {
+                  case 'light':
+                    state.setThemeMode(ThemeMode.light);
+                    break;
+                  case 'dark':
+                    state.setThemeMode(ThemeMode.dark);
+                    break;
+                  case 'system':
+                    state.setThemeMode(ThemeMode.system);
+                    break;
+                  case 'settings':
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const SettingsScreen()),
+                    );
+                    break;
+                }
+              },
+              itemBuilder: (context) => [
+                CheckedPopupMenuItem<String>(
+                  value: 'light',
+                  checked: state.themeMode == ThemeMode.light,
+                  child: const Text('Light'),
+                ),
+                CheckedPopupMenuItem<String>(
+                  value: 'dark',
+                  checked: state.themeMode == ThemeMode.dark,
+                  child: const Text('Dark'),
+                ),
+                CheckedPopupMenuItem<String>(
+                  value: 'system',
+                  checked: state.themeMode == ThemeMode.system,
+                  child: const Text('System'),
+                ),
+                const PopupMenuDivider(),
+                const PopupMenuItem<String>(
+                  value: 'settings',
+                  child: Text('Settings'),
+                ),
+              ],
             ),
           ),
         ],
@@ -903,8 +940,8 @@ class _CardShell extends StatelessWidget {
   }
 }
 
-/// Streak saves: shield icons on top, a small count underneath. Kept
-/// quieter than the streak itself.
+/// Streak saves: one big shield with the number of saves left inside it,
+/// like the due pills. Filled blue while saves remain, an outline at zero.
 class _SavesBadge extends StatelessWidget {
   const _SavesBadge({required this.tokens});
 
@@ -913,29 +950,36 @@ class _SavesBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final shown = tokens > 5 ? 5 : tokens;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
+    final has = tokens > 0;
+    return Semantics(
+      label: tokens == 1 ? '1 streak save' : '$tokens streak saves',
+      excludeSemantics: true,
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: Stack(
+          alignment: Alignment.center,
           children: [
-            if (tokens <= 0)
-              Icon(Icons.shield_outlined, size: 16, color: c.muted)
-            else
-              for (var i = 0; i < shown; i++)
-                Padding(
-                  padding: EdgeInsets.only(left: i == 0 ? 0 : 3),
-                  child: Icon(Icons.shield, size: 16, color: c.blue),
+            Icon(
+              has ? Icons.shield : Icons.shield_outlined,
+              size: 48,
+              color: has ? c.blue : c.muted,
+            ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(
+                '$tokens',
+                style: TextStyle(
+                  color: has ? Colors.white : c.muted,
+                  fontSize: tokens > 9 ? 15 : 19,
+                  fontWeight: FontWeight.w700,
+                  height: 1,
                 ),
+              ),
+            ),
           ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          tokens == 1 ? '1 save' : '$tokens saves',
-          style: TextStyle(color: c.muted, fontSize: 12),
-        ),
-      ],
+      ),
     );
   }
 }

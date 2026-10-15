@@ -8,11 +8,9 @@ import 'quote_editor_screen.dart';
 
 /// "Edit decrees" (wireframe 7b): managers add, edit, and remove the
 /// channel's decrees using the same editor look as personal decrees
-/// (draft mode). Saving replaces the channel's whole decree list —
-/// members keep their streaks because decree ids are stable per save…
-/// with one honest caveat: this v1 implementation replaces ALL ids on
-/// every save, so member read history for this channel resets. Fine for
-/// the test group; flagged for the accounts/sync phase to fix properly.
+/// (draft mode). Saving updates existing decrees in place (same ids), adds
+/// new ones and deletes removed ones, so members keep their read history and
+/// reminder choices for every decree that stays.
 class ChannelEditDecreesScreen extends StatefulWidget {
   const ChannelEditDecreesScreen({super.key, required this.channelId});
 
@@ -52,15 +50,7 @@ class _ChannelEditDecreesScreenState extends State<ChannelEditDecreesScreen> {
     if (decrees == null || _saving) return;
     setState(() => _saving = true);
     try {
-      await _service.replaceDecrees(widget.channelId, [
-        for (final d in decrees)
-          EditorDecree(
-            text: d.text,
-            targetPerDay: d.targetPerDay,
-            windowStartMin: d.windowStartMin,
-            windowEndMin: d.windowEndMin,
-          ),
-      ]);
+      await _service.saveDecrees(widget.channelId, decrees);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Decrees saved')));

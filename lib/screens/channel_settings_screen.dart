@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_state.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
+import '../widgets/share_invite.dart';
 import '../widgets/toast.dart';
 import 'channel_edit_decrees_screen.dart';
 import 'channel_stats_screen.dart';
@@ -195,6 +196,15 @@ class _ChannelSettingsScreenState extends State<ChannelSettingsScreen> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          IconButton(
+            tooltip: 'Share',
+            icon: const Icon(Icons.share_outlined, size: 20),
+            onPressed: () => showShareInviteSheet(
+              context,
+              channelName: _summary?.name ?? 'this channel',
+              joinCode: code.isEmpty ? null : code,
+            ),
+          ),
           IconButton(
             tooltip: 'Copy',
             icon: const Icon(Icons.copy, size: 20),

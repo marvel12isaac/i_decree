@@ -80,8 +80,8 @@ Future<void> maybeShowLegacyCirclesPrompt(BuildContext context) async {
   final joined = 'Joined ${names.join(' and ')}.';
   final inUse = state.reminderSlotsInUse;
   showToast(skipped > 0
-      ? '$joined Reminders on for most decrees \u00b7 $inUse a day in total. '
-          'The device limit was reached.'
-      : '$joined Reminders on \u00b7 $inUse a day in total.');
+      ? '$joined Reminders are on, but the limit ($inUse a day) was reached, '
+          'so some decrees were left off.'
+      : '$joined Reminders are on.');
   await state.completeLegacyPrompt();
 }

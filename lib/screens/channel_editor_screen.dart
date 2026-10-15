@@ -7,6 +7,7 @@ import '../models.dart';
 // import '../services/auth_service.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
+import '../widgets/share_invite.dart';
 import '../widgets/sign_in_sheet.dart';
 import 'quote_editor_screen.dart';
 
@@ -302,23 +303,28 @@ class _ShareCodeDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            FilledButton(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(
-                    text: 'Join my "$channelName" channel on iDecree! '
-                        'Open the app and search this code: $code'));
-                Navigator.of(context).pop();
-              },
-              child: const Text('Copy invite message'),
+            FilledButton.icon(
+              onPressed: () => showShareInviteSheet(
+                context,
+                channelName: channelName,
+                joinCode: code,
+              ),
+              icon: const Icon(Icons.share_outlined),
+              label: const Text('Share invite'),
             ),
-            // Direct WhatsApp share arrives with share_plus later; a
-            // clipboard invite is fully functional today.
           ] else ...[
             Text(
               '"$channelName" is public — people can find it by name in '
               'search, and you can share its name directly.',
               textAlign: TextAlign.center,
               style: TextStyle(color: c.muted, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () =>
+                  showShareInviteSheet(context, channelName: channelName),
+              icon: const Icon(Icons.share_outlined),
+              label: const Text('Share channel'),
             ),
           ],
         ],

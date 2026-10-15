@@ -422,6 +422,68 @@ class ChannelService {
     ]);
   }
 
+  /// Saves the edit-decrees screen. Decrees that already exist (non-empty
+  /// id) are updated IN PLACE, so their ids, members' read history and
+  /// reminder choices survive; new ones (empty id) are inserted; ones missing
+  /// from [decrees] are deleted. Positions follow the list order.
+  ///
+  /// This runs as several calls, not one transaction: if the connection drops
+  /// part-way, saving again finishes the job.
+  Future<void> saveDecrees(
+      String channelId, List<StoredDecree> decrees) async {
+    final rows = await _client
+        .from('channel_quotes')
+        .select('id, text, target_per_day, window_start_min, '
+            'window_end_min, position')
+        .eq('channel_id', channelId);
+    final existing = {for (final r in rows) r['id'] as String: r};
+    final keep = {
+      for (final d in decrees)
+        if (d.id.isNotEmpty) d.id
+    };
+
+    for (final id in existing.keys) {
+      if (!keep.contains(id)) {
+        await _client.from('channel_quotes').delete().eq('id', id);
+      }
+    }
+
+    for (var i = 0; i < decrees.length; i++) {
+      final d = decrees[i];
+      final old = existing[d.id];
+      if (d.id.isEmpty || old == null) {
+        await addDecree(
+          channelId,
+          text: d.text,
+          targetPerDay: d.targetPerDay,
+          windowStartMin: d.windowStartMin,
+          windowEndMin: d.windowEndMin,
+          position: i,
+        );
+        continue;
+      }
+      final contentChanged = old['text'] != d.text ||
+          (old['target_per_day'] as int?) != d.targetPerDay ||
+          (old['window_start_min'] as int?) != d.windowStartMin ||
+          (old['window_end_min'] as int?) != d.windowEndMin;
+      final moved = (old['position'] as int?) != i;
+      if (contentChanged) {
+        await updateDecree(
+          d.id,
+          text: d.text,
+          targetPerDay: d.targetPerDay,
+          windowStartMin: d.windowStartMin,
+          windowEndMin: d.windowEndMin,
+          position: i,
+        );
+      } else if (moved) {
+        await _client
+            .from('channel_quotes')
+            .update({'position': i}).eq('id', d.id);
+      }
+    }
+  }
+
   // ------------------------------------------------------------ managing
 
   /// All members with display names and roles.
@@ -491,12 +553,14 @@ class ChannelService {
     required int targetPerDay,
     required int windowStartMin,
     required int windowEndMin,
+    int? position,
   }) async {
     await _client.from('channel_quotes').update({
       'text': text,
       'target_per_day': targetPerDay,
       'window_start_min': windowStartMin,
       'window_end_min': windowEndMin,
+      if (position != null) 'position': position,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     }).eq('id', quoteId);
   }

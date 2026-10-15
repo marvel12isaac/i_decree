@@ -973,12 +973,22 @@ class AppState extends ChangeNotifier {
       .where((q) => q.remindersOn)
       .fold(0, (sum, q) => sum + unreadCount(q));
 
+  // Home's channel order for this session (see channelsByDue).
+  List<String>? _homeOrder;
+  Map<String, DueKind> _homeKinds = {};
+  String? _homeOrderDay;
+
   /// Joined channels in Home order. Channels with a read due now come first:
   /// the most recently due on top, the longest-waiting at the bottom of that
   /// group. Then channels with a next due time, soonest first. Then channels
-  /// decreed most recently, then the rest. Reading updates a channel's pill and
-  /// status at once, and a channel with nothing due now drops below the ones
-  /// that still have something due.
+  /// decreed most recently, then the rest.
+  ///
+  /// That is the order on a cold start (and on the first call each new day).
+  /// After that the order HOLDS: reading a decree updates the channel's pill
+  /// and status in place but never moves it, so people can see what they have
+  /// done without hunting for the channel. Only a channel that newly becomes
+  /// due (or a newly joined one) rises to the top. The order lives in memory,
+  /// so killing the app resets it.
   List<Circle> channelsByDue() {
     final infos = {for (final c in _circles) c.id: spaceDueInfo(c.quotes)};
     int rank(DueKind kind) {
@@ -1011,7 +1021,42 @@ class AppState extends ChangeNotifier {
       if (cmp != 0) return cmp;
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
-    return sorted;
+
+    final today = dayKey(clock());
+    final previous = _homeOrder;
+    if (previous == null || _homeOrderDay != today) {
+      _homeOrder = [for (final c in sorted) c.id];
+      _homeKinds = {for (final c in sorted) c.id: infos[c.id]!.kind};
+      _homeOrderDay = today;
+      return sorted;
+    }
+
+    final byId = {for (final c in _circles) c.id: c};
+    final defaultIndex = {
+      for (var i = 0; i < sorted.length; i++) sorted[i].id: i,
+    };
+    final risen = <String>[]; // newly due, or newly joined: go to the top
+    final kept = <String>[]; // everyone else keeps their place
+    for (final id in previous) {
+      if (!byId.containsKey(id)) continue; // left or deleted
+      final nowDue = infos[id]!.kind == DueKind.overdue;
+      final wasDue = _homeKinds[id] == DueKind.overdue;
+      if (nowDue && !wasDue) {
+        risen.add(id);
+      } else {
+        kept.add(id);
+      }
+    }
+    final known = previous.toSet();
+    for (final c in sorted) {
+      if (!known.contains(c.id)) risen.add(c.id);
+    }
+    risen.sort((a, b) => defaultIndex[a]!.compareTo(defaultIndex[b]!));
+
+    final next = [...risen, ...kept];
+    _homeOrder = next;
+    _homeKinds = {for (final c in sorted) c.id: infos[c.id]!.kind};
+    return [for (final id in next) byId[id]!];
   }
 
   DueInfo dueInfoFor(Quote quote) {

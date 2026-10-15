@@ -13,16 +13,19 @@ Future<void> toggleChannelReminder(BuildContext context, Quote quote) async {
   final messenger = ScaffoldMessenger.of(context);
   final result = await state.setChannelReminder(quote.id, !quote.remindersOn);
   if (result == ReminderToggle.on) {
-    showToast(
-        'Reminders on \u00b7 ${state.reminderSlotsInUse} a day in total');
+    final n = quote.reminderMinutes().length;
+    showToast(n == 1
+        ? 'Reminder set. You will be reminded once daily.'
+        : 'Reminder set. You will be reminded $n times daily.');
   } else if (result == ReminderToggle.off) {
-    showToast('Reminders off for this decree.');
+    showToast('Reminder off for this decree.');
   }
   if (result == ReminderToggle.limitReached) {
     messenger.showSnackBar(
-      const SnackBar(
-        content: Text('Reminder limit reached. Turn off another decree\u2019s '
-            'reminders first.'),
+      SnackBar(
+        content: Text('Reminder limit reached '
+            '(${state.reminderSlotsInUse} a day on this phone). Turn off '
+            'another decree\u2019s reminders first.'),
       ),
     );
   }
