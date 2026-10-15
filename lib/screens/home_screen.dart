@@ -12,6 +12,7 @@ import '../widgets/due_time.dart';
 import '../widgets/read_crowns.dart';
 import '../widgets/sign_in_sheet.dart';
 import '../widgets/legacy_circles_prompt.dart';
+import '../widgets/offline_banner.dart';
 import 'channel_editor_screen.dart';
 import 'circle_quote_list_screen.dart';
 import 'quote_editor_screen.dart';
@@ -120,6 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final pool = await _channelService.fetchPublicChannels();
       if (!mounted) return;
+      AppScope.of(context).reportConnection(online: true);
       pool.shuffle(Random());
       setState(() {
         _discoverPool = pool;
@@ -128,6 +130,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       // Discover is a nicety: stay hidden if it can't load.
       debugPrint('Discover channels failed to load: $e');
+      if (mounted) unawaited(AppScope.of(context).checkConnection());
     }
   }
 
@@ -274,6 +277,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               // The logo and theme switch always stay in view.
               _buildHeader(state, isDark, c),
+              const OfflineBanner(),
               Expanded(
                 child: CustomScrollView(
                   keyboardDismissBehavior:
@@ -980,14 +984,14 @@ class _SavesBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(
-            width: 48,
-            height: 48,
+            width: 30,
+            height: 30,
             child: Stack(
               alignment: Alignment.center,
               children: [
                 Icon(
                   has ? Icons.shield : Icons.shield_outlined,
-                  size: 36,
+                  size: 30,
                   color: has ? c.blue : c.muted,
                 ),
                 Padding(
@@ -996,7 +1000,7 @@ class _SavesBadge extends StatelessWidget {
                     '$tokens',
                     style: TextStyle(
                       color: has ? Colors.white : c.muted,
-                      fontSize: tokens > 9 ? 11 : 15,
+                      fontSize: tokens > 9 ? 9 : 13,
                       fontWeight: FontWeight.w700,
                       height: 1,
                     ),
@@ -1006,7 +1010,7 @@ class _SavesBadge extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 2),
-          Text('Saves', style: TextStyle(color: c.muted, fontSize: 12)),
+          Text('Saves', style: TextStyle(color: c.muted, fontSize: 11)),
         ],
       ),
     );

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../app_state.dart';
 import '../models.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
+import '../widgets/offline_banner.dart';
 import 'quote_editor_screen.dart';
 
 /// "Edit decrees" (wireframe 7b): managers add, edit, and remove the
@@ -27,6 +29,7 @@ class _ChannelEditDecreesScreenState extends State<ChannelEditDecreesScreen> {
 
   List<StoredDecree>? _decrees;
   bool _saving = false;
+  bool _loadFailed = false;
 
   @override
   void initState() {
@@ -41,13 +44,16 @@ class _ChannelEditDecreesScreenState extends State<ChannelEditDecreesScreen> {
       setState(() => _decrees = d);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _decrees = []);
+      // Keep the list null (not empty): saving an empty list would delete
+      // every decree, so Save and Add stay off until the list really loads.
+      setState(() => _loadFailed = true);
     }
   }
 
   Future<void> _saveAll() async {
     final decrees = _decrees;
     if (decrees == null || _saving) return;
+    final state = AppScope.of(context);
     setState(() => _saving = true);
     try {
       await _service.saveDecrees(widget.channelId, decrees);
@@ -56,9 +62,10 @@ class _ChannelEditDecreesScreenState extends State<ChannelEditDecreesScreen> {
           const SnackBar(content: Text('Decrees saved')));
       Navigator.of(context).pop();
     } catch (e) {
+      final online = await state.checkConnection();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not save. Try again.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(online ? 'Could not save. Try again.' : offlineActionMessage)));
       setState(() => _saving = false);
     }
   }
@@ -120,10 +127,36 @@ class _ChannelEditDecreesScreenState extends State<ChannelEditDecreesScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: decrees != null && decrees.length >= 33 ? null : _addDecree,
+        onPressed:
+            decrees == null || decrees.length >= 33 ? null : _addDecree,
         child: const Icon(Icons.add),
       ),
-      body: decrees == null
+      body: _loadFailed
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Could not load this channel\u2019s decrees. '
+                      'Check your connection.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: c.muted),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: () {
+                        setState(() => _loadFailed = false);
+                        _load();
+                      },
+                      child: const Text('Try again'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : decrees == null
           ? const Center(child: CircularProgressIndicator())
           : decrees.isEmpty
               ? Center(

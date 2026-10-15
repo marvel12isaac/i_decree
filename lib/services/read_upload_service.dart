@@ -4,10 +4,9 @@
 // Rules (agreed):
 // - Only reads of JOINED channels' decrees are uploaded. Personal decree
 //   reads never leave the device.
-// - Fire-and-forget: an upload failure must never disturb the reading
-//   experience. Failures are logged and simply not retried (the next read
-//   of the same decree writes a fresh cumulative count, so nothing is
-//   permanently lost — counts are totals, not deltas).
+// - An upload failure must never disturb the reading experience. It is
+//   logged and reported back as `false`; AppState keeps the read in a
+//   pending list and tries again when the phone is back online.
 // - The local _reads map in AppState remains the single source of truth
 //   for the user's own streaks. This service is purely for creator stats.
 //
@@ -25,7 +24,8 @@ class ReadUploadService {
 
   /// Records that [userId] read the channel decree [quoteId] (in channel
   /// [channelId]) [countForToday] times so far today. Cumulative upsert.
-  Future<void> uploadRead({
+  /// Returns true when the server accepted it, false otherwise.
+  Future<bool> uploadRead({
     required String quoteId,
     required String channelId,
     required String userId,
@@ -43,10 +43,11 @@ class ReadUploadService {
         },
         onConflict: 'quote_id,user_id,day',
       );
+      return true;
     } catch (e) {
-      // Never disturb the reader. The most common cause is being offline;
-      // the next read re-uploads a fresh cumulative count.
-      debugPrint('Read upload failed (ignored): $e');
+      // Never disturb the reader. The most common cause is being offline.
+      debugPrint('Read upload failed (will retry): $e');
+      return false;
     }
   }
 }

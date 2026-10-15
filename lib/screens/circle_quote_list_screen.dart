@@ -6,6 +6,7 @@ import '../app_state.dart';
 import '../models.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
+import '../widgets/offline_banner.dart';
 import '../widgets/share_invite.dart';
 import '../widgets/due_time.dart';
 import '../widgets/quote_text.dart';
@@ -53,6 +54,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
 
   List<ChannelDecreePreview>? _previewDecrees;
   bool _loadingPreview = false;
+  bool _previewRequested = false;
   String? _error;
   bool _joining = false;
 
@@ -77,7 +79,6 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
-    _maybeLoadPreview();
     _loadRoleAndCode();
     // First time a member opens this channel's list: point at the bell.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -167,12 +168,10 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     }
     final canAdd = !preview && _roleKnown && _isManager && _isSupabaseChannel;
 
-    if (preview &&
-        _previewDecrees == null &&
-        !_loadingPreview &&
-        _error == null) {
-      _maybeLoadPreview();
-    }
+    // Only people who have NOT joined need the server's copy of the decrees.
+    // Members always read from the saved copy, so being offline never blanks
+    // their list.
+    _requestPreviewIfNeeded(preview);
 
     final title = circle?.name ?? widget.channelName ?? 'Channel';
     final memberCount = widget.memberCount ?? _fetchedMemberCount;
@@ -218,6 +217,7 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       ),
       body: Column(
         children: [
+          const OfflineBanner(),
           if (preview) _buildJoinBanner(context, state, c),
           Expanded(
               child: _buildBody(context, state, c, preview, inFeed, circle)),
@@ -313,6 +313,20 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
 
   // ------------------------------------------------------------- preview
 
+  void _requestPreviewIfNeeded(bool preview) {
+    if (!preview || _previewRequested) return;
+    _previewRequested = true;
+    final preloaded = widget.preloadedQuotes;
+    if (preloaded != null) {
+      _previewDecrees = preloaded;
+      return;
+    }
+    _loadingPreview = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _maybeLoadPreview();
+    });
+  }
+
   Future<void> _maybeLoadPreview() async {
     final preloaded = widget.preloadedQuotes;
     if (preloaded != null) {
@@ -400,9 +414,14 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
     }
   }
 
-  void _showCouldNotJoin() {
+  Future<void> _showCouldNotJoin() async {
+    final online = await AppScope.of(context).checkConnection();
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Could not join. Try again.')),
+      SnackBar(
+        content: Text(
+            online ? 'Could not join. Try again.' : offlineActionMessage),
+      ),
     );
   }
 
@@ -420,8 +439,22 @@ class _CircleQuoteListScreenState extends State<CircleQuoteListScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_error!,
-              textAlign: TextAlign.center, style: TextStyle(color: c.muted)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_error!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: c.muted)),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () => setState(() {
+                  _error = null;
+                  _previewRequested = false;
+                }),
+                child: const Text('Try again'),
+              ),
+            ],
+          ),
         ),
       );
     }

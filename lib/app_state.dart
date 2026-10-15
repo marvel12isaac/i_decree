@@ -126,6 +126,12 @@ class AppState extends ChangeNotifier {
   // When channels were last refreshed because the app came to the front.
   DateTime? _lastResumeRefresh;
 
+  // Channel reads waiting for the server to confirm ("quoteId|channelId|day").
+  // A read done offline stays here and is uploaded once the phone is back
+  // online. Counts are cumulative, so one entry per decree per day is enough.
+  final Set<String> _pendingReads = {};
+  static const String _pendingReadsKey = 'pending_read_uploads_v1';
+
   // quoteId -> (yyyy-MM-dd -> number of reads that day)
   final Map<String, Map<String, int>> _reads = {};
   final Set<String> _frozenDays = {};
@@ -206,12 +212,17 @@ class AppState extends ChangeNotifier {
     state._loadReminderOptIns();
     state._loadJoinedIds();
     state._loadJoinedCache();
+    state._loadPendingReads();
     // Signed in: restore everything tied to the account (personal backup,
     // memberships, channel content) and keep backups uploading. Signed
     // out: just refresh any channels joined on this device.
     unawaited(state.isSignedIn
         ? state.restoreAccountData()
         : state.refreshJoinedChannels());
+    // Find out right away whether the server is reachable, and send any
+    // channel reads that were still waiting from last time.
+    unawaited(state.checkConnection());
+    unawaited(state.flushPendingReads());
 
     return state;
   }
@@ -557,8 +568,10 @@ class AppState extends ChangeNotifier {
       final data = await _channelServiceForJoined
           .fetchJoined(_joinedChannelIds.toList());
       _applyJoinedChannels(data);
+      reportConnection(online: true);
     } catch (e) {
       debugPrint('Joined-channel refresh failed (keeping cache): $e');
+      unawaited(checkConnection());
     }
   }
 
@@ -763,6 +776,7 @@ class AppState extends ChangeNotifier {
       backups ??= BackupService(Supabase.instance.client);
       final service = backups!;
       final remote = await service.fetch();
+      reportConnection(online: true);
       if (remote != null) {
         if (mergeBackup(remote)) {
           processMissedDays();
@@ -775,6 +789,7 @@ class AppState extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('Account restore failed: $e');
+      unawaited(checkConnection());
     }
     await refreshJoinedChannels();
     notifyListeners(); // the UI must show what was restored
@@ -783,6 +798,11 @@ class AppState extends ChangeNotifier {
   /// Called when the app returns to the foreground: re-pull channels and
   /// featured quotes, at most once every few minutes.
   Future<void> refreshOnResume() async {
+    if (isOffline) {
+      // Don't wait out the throttle: check again as soon as the app is back.
+      await _retryConnection();
+      return;
+    }
     final now = clock();
     final last = _lastResumeRefresh;
     if (last != null && now.difference(last) < const Duration(minutes: 5)) {
@@ -791,6 +811,60 @@ class AppState extends ChangeNotifier {
     _lastResumeRefresh = now;
     await refreshJoinedChannels();
     unawaited(refreshFeaturedQuotes());
+    unawaited(flushPendingReads());
+  }
+
+  // ---------------------------------------------------------- connectivity
+
+  /// True when the last check found the server unreachable. The app keeps
+  /// working from its saved copy; screens show an offline banner. It is based
+  /// on real requests (not just "Wi-Fi is on"), so it also catches a
+  /// connection with no internet.
+  bool isOffline = false;
+  Timer? _offlineRetryTimer;
+
+  /// Records the result of reaching (or failing to reach) the server.
+  void reportConnection({required bool online}) {
+    if (isOffline == !online) return;
+    isOffline = !online;
+    if (isOffline) {
+      _offlineRetryTimer?.cancel();
+      _offlineRetryTimer = Timer.periodic(
+        const Duration(seconds: 60),
+        (_) => unawaited(_retryConnection()),
+      );
+    } else {
+      _offlineRetryTimer?.cancel();
+      _offlineRetryTimer = null;
+      unawaited(flushPendingReads());
+    }
+    notifyListeners();
+  }
+
+  /// A tiny request that tells us whether the server can be reached. Any
+  /// failed request calls this, so a server-side error is not mistaken for
+  /// being offline.
+  Future<bool> checkConnection() async {
+    try {
+      await Supabase.instance.client
+          .from('channels')
+          .select('id')
+          .limit(1)
+          .timeout(const Duration(seconds: 8));
+      reportConnection(online: true);
+      return true;
+    } catch (e) {
+      debugPrint('Connection check failed: $e');
+      reportConnection(online: false);
+      return false;
+    }
+  }
+
+  Future<void> _retryConnection() async {
+    if (await checkConnection()) {
+      unawaited(refreshJoinedChannels());
+      unawaited(refreshFeaturedQuotes());
+    }
   }
 
   // ---------------------------------------------------- featured rotation
@@ -812,6 +886,7 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _featuredTimer?.cancel();
+    _offlineRetryTimer?.cancel();
     featuredIndex.dispose();
     super.dispose();
   }
@@ -938,13 +1013,63 @@ class AppState extends ChangeNotifier {
     if (channelId == null || !_joinedChannelIds.contains(channelId)) {
       return; // browsing without membership: local-only (agreed rule)
     }
-    unawaited(_readUploads.uploadRead(
-      quoteId: quoteId,
-      channelId: channelId,
+    // Remember the read until the server confirms it, so a read done offline
+    // is sent later.
+    final key = '$quoteId|$channelId|$dayK';
+    _pendingReads.add(key);
+    unawaited(_savePendingReads());
+    unawaited(_uploadPendingRead(key));
+  }
+
+  void _loadPendingReads() {
+    _pendingReads
+      ..clear()
+      ..addAll(_prefs.getStringList(_pendingReadsKey) ?? const []);
+  }
+
+  Future<void> _savePendingReads() =>
+      _prefs.setStringList(_pendingReadsKey, _pendingReads.toList());
+
+  Future<void> _uploadPendingRead(String key) async {
+    final parts = key.split('|');
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return; // signed out: keep it for when they sign in
+    if (parts.length != 3) {
+      _pendingReads.remove(key); // malformed entry
+      unawaited(_savePendingReads());
+      return;
+    }
+    final count = _reads[parts[0]]?[parts[2]];
+    if (count == null) {
+      _pendingReads.remove(key); // the read history is gone
+      unawaited(_savePendingReads());
+      return;
+    }
+    final ok = await _readUploads.uploadRead(
+      quoteId: parts[0],
+      channelId: parts[1],
       userId: user.id,
-      dayKey: dayK,
-      countForToday: _reads[quoteId]?[dayK] ?? 1,
-    ));
+      dayKey: parts[2],
+      countForToday: count,
+    );
+    if (ok) {
+      _pendingReads.remove(key);
+      unawaited(_savePendingReads());
+      reportConnection(online: true);
+    } else {
+      unawaited(checkConnection());
+    }
+  }
+
+  /// Sends every channel read that is still waiting. Entries older than two
+  /// weeks are dropped so a read the server keeps refusing can't pile up.
+  Future<void> flushPendingReads() async {
+    if (_pendingReads.isEmpty) return;
+    final cutoff = dayKey(clock().subtract(const Duration(days: 14)));
+    _pendingReads.removeWhere((k) => k.split('|').last.compareTo(cutoff) < 0);
+    for (final key in _pendingReads.toList()) {
+      await _uploadPendingRead(key);
+    }
   }
 
   // ---------------------------------------------------------------- streaks
@@ -1067,15 +1192,19 @@ class AppState extends ChangeNotifier {
     // day can't show).
     final today = readsTodayFor(quote.id);
     final times = quote.reminderMinutes();
-    if (today >= times.length) {
+    // "Done for today" follows the read target (the crowns). A window whose
+    // end is not after its start has only one time slot, so the remaining
+    // reads share that last slot instead of counting as done.
+    final target = quote.targetPerDay.clamp(1, Quote.maxPerDay).toInt();
+    if (today >= target) {
       return DueInfo.lastReadAt(_lastReadAt[quote.id] ?? clock());
     }
     final now = clock();
     final nowMin = now.hour * 60 + now.minute;
     final elapsed = times.where((t) => t <= nowMin).length;
-    return today < elapsed
-        ? DueInfo.overdue(times[today])
-        : DueInfo.upcoming(times[today]);
+    final slot = times[today < times.length ? today : times.length - 1];
+    final isDue = today < times.length ? today < elapsed : slot <= nowMin;
+    return isDue ? DueInfo.overdue(slot) : DueInfo.upcoming(slot);
   }
 
   DueInfo spaceDueInfo(List<Quote> quotes) {

@@ -7,6 +7,7 @@ import '../models.dart';
 // import '../services/auth_service.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
+import '../widgets/offline_banner.dart';
 import '../widgets/share_invite.dart';
 import '../widgets/sign_in_sheet.dart';
 import 'quote_editor_screen.dart';
@@ -110,10 +111,13 @@ class _ChannelEditorScreenState extends State<ChannelEditorScreen> {
       if (!mounted) return;
       Navigator.of(context).popUntil((r) => r.isFirst); // Home
     } catch (e) {
+      final online = await state.checkConnection();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Could not create the channel. Try again.')),
+        SnackBar(
+            content: Text(online
+                ? 'Could not create the channel. Try again.'
+                : offlineActionMessage)),
       );
       setState(() => _saving = false);
     }
