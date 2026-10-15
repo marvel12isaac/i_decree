@@ -318,6 +318,40 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ----------------------------------------------------------------- header
 
+  /// One row of the Home menu: icon + text. The selected theme gets a tinted
+  /// background and teal, bold text instead of a check mark.
+  PopupMenuItem<String> _menuItem(
+    AppColors c,
+    String value,
+    IconData icon,
+    String label, {
+    bool selected = false,
+  }) {
+    final color = selected ? c.teal : null;
+    return PopupMenuItem<String>(
+      value: value,
+      padding: EdgeInsets.zero,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        color: selected ? c.teal.withValues(alpha: 0.14) : null,
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color ?? c.muted),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildHeader(AppState state, bool isDark, AppColors c) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -357,26 +391,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 }
               },
               itemBuilder: (context) => [
-                CheckedPopupMenuItem<String>(
-                  value: 'light',
-                  checked: state.themeMode == ThemeMode.light,
-                  child: const Text('Light'),
-                ),
-                CheckedPopupMenuItem<String>(
-                  value: 'dark',
-                  checked: state.themeMode == ThemeMode.dark,
-                  child: const Text('Dark'),
-                ),
-                CheckedPopupMenuItem<String>(
-                  value: 'system',
-                  checked: state.themeMode == ThemeMode.system,
-                  child: const Text('System'),
-                ),
+                _menuItem(c, 'light', Icons.light_mode_outlined, 'Light',
+                    selected: state.themeMode == ThemeMode.light),
+                _menuItem(c, 'dark', Icons.dark_mode_outlined, 'Dark',
+                    selected: state.themeMode == ThemeMode.dark),
+                _menuItem(c, 'system', Icons.brightness_auto_outlined, 'System',
+                    selected: state.themeMode == ThemeMode.system),
                 const PopupMenuDivider(),
-                const PopupMenuItem<String>(
-                  value: 'settings',
-                  child: Text('Settings'),
-                ),
+                _menuItem(c, 'settings', Icons.settings_outlined, 'Settings'),
               ],
             ),
           ),
@@ -954,31 +976,38 @@ class _SavesBadge extends StatelessWidget {
     return Semantics(
       label: tokens == 1 ? '1 streak save' : '$tokens streak saves',
       excludeSemantics: true,
-      child: SizedBox(
-        width: 48,
-        height: 48,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Icon(
-              has ? Icons.shield : Icons.shield_outlined,
-              size: 48,
-              color: has ? c.blue : c.muted,
-            ),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Text(
-                '$tokens',
-                style: TextStyle(
-                  color: has ? Colors.white : c.muted,
-                  fontSize: tokens > 9 ? 15 : 19,
-                  fontWeight: FontWeight.w700,
-                  height: 1,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(
+                  has ? Icons.shield : Icons.shield_outlined,
+                  size: 36,
+                  color: has ? c.blue : c.muted,
                 ),
-              ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Text(
+                    '$tokens',
+                    style: TextStyle(
+                      color: has ? Colors.white : c.muted,
+                      fontSize: tokens > 9 ? 11 : 15,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 2),
+          Text('Saves', style: TextStyle(color: c.muted, fontSize: 12)),
+        ],
       ),
     );
   }
