@@ -33,6 +33,10 @@ class QuoteListScreen extends StatefulWidget {
 class _QuoteListScreenState extends State<QuoteListScreen> {
   Timer? _clockTimer;
 
+  /// The id of the row whose trash button is showing (null = none). Shared by
+  /// all rows so only one can be open at a time.
+  final ValueNotifier<String?> _openRow = ValueNotifier<String?>(null);
+
   @override
   void initState() {
     super.initState();
@@ -46,6 +50,7 @@ class _QuoteListScreenState extends State<QuoteListScreen> {
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _openRow.dispose();
     super.dispose();
   }
 
@@ -86,7 +91,8 @@ class _QuoteListScreenState extends State<QuoteListScreen> {
                     padding: const EdgeInsets.only(bottom: 96),
                     itemCount: quotes.length,
                     separatorBuilder: (_, __) => const Divider(),
-                    itemBuilder: (context, i) => _QuoteRow(quote: quotes[i]),
+                    itemBuilder: (context, i) =>
+                        _QuoteRow(quote: quotes[i], openRow: _openRow),
                   ),
           ),
         ],
@@ -96,9 +102,10 @@ class _QuoteListScreenState extends State<QuoteListScreen> {
 }
 
 class _QuoteRow extends StatelessWidget {
-  const _QuoteRow({required this.quote});
+  const _QuoteRow({required this.quote, required this.openRow});
 
   final Quote quote;
+  final ValueNotifier<String?> openRow;
 
   @override
   Widget build(BuildContext context) {
@@ -108,6 +115,8 @@ class _QuoteRow extends StatelessWidget {
 
     return _SwipeToDelete(
       key: ValueKey(quote.id),
+      id: quote.id,
+      openRow: openRow,
       // Double check: swiping only reveals the trash button; tapping it opens
       // the usual confirmation dialog.
       onDelete: () async {
@@ -146,14 +155,19 @@ class _QuoteRow extends StatelessWidget {
 /// Swipe a row left to reveal a round trash button behind it. Nothing is
 /// deleted by the swipe itself: tapping the button runs [onDelete] (which
 /// shows the confirmation dialog and returns true if the row was deleted).
-/// Tapping the row, or cancelling the dialog, closes it again.
+/// Tapping the row, or cancelling the dialog, closes it again. Only one row
+/// is open at a time ([openRow] is shared by the whole list).
 class _SwipeToDelete extends StatefulWidget {
   const _SwipeToDelete({
     super.key,
+    required this.id,
+    required this.openRow,
     required this.child,
     required this.onDelete,
   });
 
+  final String id;
+  final ValueNotifier<String?> openRow;
   final Widget child;
   final Future<bool> Function() onDelete;
 
@@ -168,12 +182,40 @@ class _SwipeToDeleteState extends State<_SwipeToDelete> {
   bool _dragging = false;
   bool _isOpen = false;
 
+  @override
+  void initState() {
+    super.initState();
+    widget.openRow.addListener(_onOpenRowChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.openRow.removeListener(_onOpenRowChanged);
+    super.dispose();
+  }
+
+  /// Another row opened: close this one.
+  void _onOpenRowChanged() {
+    if (_isOpen && widget.openRow.value != widget.id && mounted) {
+      setState(() {
+        _isOpen = false;
+        _dx = 0;
+        _dragging = false;
+      });
+    }
+  }
+
   void _setOpen(bool open) {
     setState(() {
       _isOpen = open;
       _dx = open ? -_revealWidth : 0;
       _dragging = false;
     });
+    if (open) {
+      widget.openRow.value = widget.id;
+    } else if (widget.openRow.value == widget.id) {
+      widget.openRow.value = null;
+    }
   }
 
   Future<void> _confirmDelete() async {
@@ -211,23 +253,32 @@ class _SwipeToDeleteState extends State<_SwipeToDelete> {
             ),
           ),
         ),
-        GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onHorizontalDragStart: (_) => setState(() => _dragging = true),
-          onHorizontalDragUpdate: (d) => setState(() {
-            _dx = (_dx + d.delta.dx).clamp(-_revealWidth, 0.0).toDouble();
-          }),
-          onHorizontalDragEnd: (d) {
-            final v = d.primaryVelocity ?? 0;
-            _setOpen(v < -300 || (v <= 300 && _dx < -_revealWidth / 2));
-          },
-          onTap: _isOpen ? () => _setOpen(false) : null,
-          child: AnimatedContainer(
-            duration:
-                _dragging ? Duration.zero : const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            transform: Matrix4.translationValues(_dx, 0, 0),
-            color: c.background,
+        // The gesture detector lives INSIDE the sliding row, so the strip the
+        // row slides away from belongs only to the trash button.
+        AnimatedContainer(
+          duration:
+              _dragging ? Duration.zero : const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          transform: Matrix4.translationValues(_dx, 0, 0),
+          color: c.background,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragStart: (_) {
+              // Starting to swipe a row closes any other row that is open.
+              final open = widget.openRow.value;
+              if (open != null && open != widget.id) {
+                widget.openRow.value = null;
+              }
+              setState(() => _dragging = true);
+            },
+            onHorizontalDragUpdate: (d) => setState(() {
+              _dx = (_dx + d.delta.dx).clamp(-_revealWidth, 0.0).toDouble();
+            }),
+            onHorizontalDragEnd: (d) {
+              final v = d.primaryVelocity ?? 0;
+              _setOpen(v < -300 || (v <= 300 && _dx < -_revealWidth / 2));
+            },
+            onTap: _isOpen ? () => _setOpen(false) : null,
             child: AbsorbPointer(absorbing: _isOpen, child: widget.child),
           ),
         ),
