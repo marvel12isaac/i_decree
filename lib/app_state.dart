@@ -16,7 +16,10 @@ import 'services/backup_service.dart';
 import 'services/channel_service.dart';
 import 'services/read_upload_service.dart';
 
-enum DueKind { overdue, upcoming, lastRead, none }
+/// [doneToday]: every read for today is done, but the time of the last read
+/// isn't known (for example after the phone's data was cleared and today's
+/// counts were restored without their times).
+enum DueKind { overdue, upcoming, lastRead, doneToday, none }
 
 /// Result of turning a channel decree's reminders on or off.
 enum ReminderToggle { on, off, limitReached }
@@ -31,6 +34,10 @@ class DueInfo {
   DueInfo.lastReadAt(this.lastRead)
       : kind = DueKind.lastRead,
         minutes = null;
+  DueInfo.doneToday()
+      : kind = DueKind.doneToday,
+        minutes = null,
+        lastRead = null;
   DueInfo.none()
       : kind = DueKind.none,
         minutes = null,
@@ -1034,7 +1041,7 @@ class AppState extends ChangeNotifier {
     final parts = key.split('|');
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return; // signed out: keep it for when they sign in
-    if (parts.length != 3) {
+       if (parts.length != 3) {
       _pendingReads.remove(key); // malformed entry
       unawaited(_savePendingReads());
       return;
@@ -1124,8 +1131,10 @@ class AppState extends ChangeNotifier {
           return 1;
         case DueKind.lastRead:
           return 2;
-        case DueKind.none:
+        case DueKind.doneToday:
           return 3;
+        case DueKind.none:
+          return 4;
       }
     }
 
@@ -1196,10 +1205,17 @@ class AppState extends ChangeNotifier {
     // end is not after its start has only one time slot, so the remaining
     // reads share that last slot instead of counting as done.
     final target = quote.targetPerDay.clamp(1, Quote.maxPerDay).toInt();
-    if (today >= target) {
-      return DueInfo.lastReadAt(_lastReadAt[quote.id] ?? clock());
-    }
     final now = clock();
+    if (today >= target) {
+      // Show the real time of the last read, but only if it was TODAY. If the
+      // time is missing (or is from an earlier day), say "Done today" rather
+      // than invent one. The next read saves a fresh time and replaces this.
+      final last = _lastReadAt[quote.id];
+      if (last != null && dayKey(last) == dayKey(now)) {
+        return DueInfo.lastReadAt(last);
+      }
+      return DueInfo.doneToday();
+    }
     final nowMin = now.hour * 60 + now.minute;
     final elapsed = times.where((t) => t <= nowMin).length;
     final slot = times[today < times.length ? today : times.length - 1];
@@ -1211,6 +1227,7 @@ class AppState extends ChangeNotifier {
     DueInfo? overdue;
     DueInfo? upcoming;
     DateTime? lastRead;
+    var anyDoneToday = false;
     for (final q in quotes) {
       final info = dueInfoFor(q);
       switch (info.kind) {
@@ -1229,6 +1246,9 @@ class AppState extends ChangeNotifier {
             lastRead = info.lastRead;
           }
           break;
+        case DueKind.doneToday:
+          anyDoneToday = true;
+          break;
         case DueKind.none:
           break;
       }
@@ -1236,6 +1256,7 @@ class AppState extends ChangeNotifier {
     if (overdue != null) return overdue;
     if (upcoming != null) return upcoming;
     if (lastRead != null) return DueInfo.lastReadAt(lastRead);
+    if (anyDoneToday) return DueInfo.doneToday();
     return DueInfo.none();
   }
 

@@ -1009,7 +1009,7 @@ class _SavesBadge extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 1),
           Text('Saves', style: TextStyle(color: c.muted, fontSize: 11)),
         ],
       ),
