@@ -14,7 +14,12 @@ import 'quote_view_screen.dart';
 
 /// My Decrees: the user's own quotes. Each row shows the text as a bold
 /// title with normal body text under it, then a due/next/last-read status
-/// with today's read progress as crowns. Swipe left to delete.
+/// with today's read progress as crowns. Swipe left to reveal a trash
+/// button; tapping it asks for confirmation before deleting.
+///
+/// Rows follow the same order as Home's channels (see
+/// AppState.quotesByDue). The Featured card above the list is not part of
+/// that order.
 ///
 /// (Channels have the same list, but it comes from a hosted file and can't be
 /// edited or deleted by members.)
@@ -48,7 +53,7 @@ class _QuoteListScreenState extends State<QuoteListScreen> {
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final c = AppColors.of(context);
-    final quotes = state.quotes;
+    final quotes = state.quotesByDue();
 
     return Scaffold(
       appBar: AppBar(title: const Text('My Decrees')),
@@ -101,17 +106,16 @@ class _QuoteRow extends StatelessWidget {
     final c = AppColors.of(context);
     final due = state.dueInfoFor(quote);
 
-    return Dismissible(
+    return _SwipeToDelete(
       key: ValueKey(quote.id),
-      direction: DismissDirection.endToStart,
-      confirmDismiss: (_) => confirmDelete(context),
-      onDismissed: (_) => state.deleteQuote(quote.id),
-      background: Container(
-        color: Palette.danger,
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 24),
-        child: const Icon(Icons.delete_outline, color: Colors.white),
-      ),
+      // Double check: swiping only reveals the trash button; tapping it opens
+      // the usual confirmation dialog.
+      onDelete: () async {
+        final ok = await confirmDelete(context);
+        if (ok != true) return false;
+        state.deleteQuote(quote.id);
+        return true;
+      },
       child: InkWell(
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(
@@ -135,6 +139,99 @@ class _QuoteRow extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Swipe a row left to reveal a round trash button behind it. Nothing is
+/// deleted by the swipe itself: tapping the button runs [onDelete] (which
+/// shows the confirmation dialog and returns true if the row was deleted).
+/// Tapping the row, or cancelling the dialog, closes it again.
+class _SwipeToDelete extends StatefulWidget {
+  const _SwipeToDelete({
+    super.key,
+    required this.child,
+    required this.onDelete,
+  });
+
+  final Widget child;
+  final Future<bool> Function() onDelete;
+
+  @override
+  State<_SwipeToDelete> createState() => _SwipeToDeleteState();
+}
+
+class _SwipeToDeleteState extends State<_SwipeToDelete> {
+  static const double _revealWidth = 96;
+
+  double _dx = 0;
+  bool _dragging = false;
+  bool _isOpen = false;
+
+  void _setOpen(bool open) {
+    setState(() {
+      _isOpen = open;
+      _dx = open ? -_revealWidth : 0;
+      _dragging = false;
+    });
+  }
+
+  Future<void> _confirmDelete() async {
+    final deleted = await widget.onDelete();
+    if (!deleted && mounted) _setOpen(false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Stack(
+      children: [
+        // The trash button sits behind the row and is uncovered by the swipe.
+        Positioned.fill(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 20),
+              child: IgnorePointer(
+                ignoring: !_isOpen,
+                child: Material(
+                  color: Palette.danger.withValues(alpha: 0.15),
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: _confirmDelete,
+                    child: const SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: Icon(Icons.delete_outline, color: Palette.danger),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragStart: (_) => setState(() => _dragging = true),
+          onHorizontalDragUpdate: (d) => setState(() {
+            _dx = (_dx + d.delta.dx).clamp(-_revealWidth, 0.0).toDouble();
+          }),
+          onHorizontalDragEnd: (d) {
+            final v = d.primaryVelocity ?? 0;
+            _setOpen(v < -300 || (v <= 300 && _dx < -_revealWidth / 2));
+          },
+          onTap: _isOpen ? () => _setOpen(false) : null,
+          child: AnimatedContainer(
+            duration:
+                _dragging ? Duration.zero : const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            transform: Matrix4.translationValues(_dx, 0, 0),
+            color: c.background,
+            child: AbsorbPointer(absorbing: _isOpen, child: widget.child),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -1041,7 +1041,7 @@ class AppState extends ChangeNotifier {
     final parts = key.split('|');
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return; // signed out: keep it for when they sign in
-       if (parts.length != 3) {
+    if (parts.length != 3) {
       _pendingReads.remove(key); // malformed entry
       unawaited(_savePendingReads());
       return;
@@ -1109,6 +1109,26 @@ class AppState extends ChangeNotifier {
   List<String>? _homeOrder;
   Map<String, DueKind> _homeKinds = {};
   String? _homeOrderDay;
+
+  // My Decrees order for this session (see quotesByDue).
+  List<String>? _quotesOrder;
+  Map<String, DueKind> _quotesKinds = {};
+  String? _quotesOrderDay;
+
+  static int _dueRank(DueKind kind) {
+    switch (kind) {
+      case DueKind.overdue:
+        return 0;
+      case DueKind.upcoming:
+        return 1;
+      case DueKind.lastRead:
+        return 2;
+      case DueKind.doneToday:
+        return 3;
+      case DueKind.none:
+        return 4;
+    }
+  }
 
   /// Joined channels in Home order. Channels with a read due now come first:
   /// the most recently due on top, the longest-waiting at the bottom of that
@@ -1190,6 +1210,75 @@ class AppState extends ChangeNotifier {
     final next = [...risen, ...kept];
     _homeOrder = next;
     _homeKinds = {for (final c in sorted) c.id: infos[c.id]!.kind};
+    return [for (final id in next) byId[id]!];
+  }
+
+  /// The user's own decrees in the same order as Home's channels: due now
+  /// first (most recently due on top), then next due, then last decreed.
+  /// After that the order HOLDS: reading a decree updates its status in place
+  /// but never moves it; only a decree that newly becomes due (or a newly
+  /// added one) rises to the top. Resets on a cold start and each new day.
+  ///
+  /// This is only a view: [quotes] keeps its own order, and the Featured card
+  /// is not part of it.
+  List<Quote> quotesByDue() {
+    final infos = {for (final q in _quotes) q.id: dueInfoFor(q)};
+    final position = {
+      for (var i = 0; i < _quotes.length; i++) _quotes[i].id: i,
+    };
+
+    final sorted = [..._quotes];
+    sorted.sort((a, b) {
+      final da = infos[a.id]!;
+      final db = infos[b.id]!;
+      final byRank = _dueRank(da.kind).compareTo(_dueRank(db.kind));
+      if (byRank != 0) return byRank;
+      var cmp = 0;
+      if (da.kind == DueKind.overdue) {
+        cmp = db.minutes!.compareTo(da.minutes!); // most recently due first
+      } else if (da.kind == DueKind.upcoming) {
+        cmp = da.minutes!.compareTo(db.minutes!); // soonest next due first
+      } else if (da.kind == DueKind.lastRead) {
+        cmp = db.lastRead!.compareTo(da.lastRead!); // decreed most recently
+      }
+      if (cmp != 0) return cmp;
+      return position[a.id]!.compareTo(position[b.id]!); // list order
+    });
+
+    final today = dayKey(clock());
+    final previous = _quotesOrder;
+    if (previous == null || _quotesOrderDay != today) {
+      _quotesOrder = [for (final q in sorted) q.id];
+      _quotesKinds = {for (final q in sorted) q.id: infos[q.id]!.kind};
+      _quotesOrderDay = today;
+      return sorted;
+    }
+
+    final byId = {for (final q in _quotes) q.id: q};
+    final defaultIndex = {
+      for (var i = 0; i < sorted.length; i++) sorted[i].id: i,
+    };
+    final risen = <String>[]; // newly due, or newly added: go to the top
+    final kept = <String>[]; // everyone else keeps their place
+    for (final id in previous) {
+      if (!byId.containsKey(id)) continue; // deleted
+      final nowDue = infos[id]!.kind == DueKind.overdue;
+      final wasDue = _quotesKinds[id] == DueKind.overdue;
+      if (nowDue && !wasDue) {
+        risen.add(id);
+      } else {
+        kept.add(id);
+      }
+    }
+    final known = previous.toSet();
+    for (final q in sorted) {
+      if (!known.contains(q.id)) risen.add(q.id);
+    }
+    risen.sort((a, b) => defaultIndex[a]!.compareTo(defaultIndex[b]!));
+
+    final next = [...risen, ...kept];
+    _quotesOrder = next;
+    _quotesKinds = {for (final q in sorted) q.id: infos[q.id]!.kind};
     return [for (final id in next) byId[id]!];
   }
 

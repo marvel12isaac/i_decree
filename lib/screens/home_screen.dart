@@ -633,7 +633,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ));
     }
 
-    for (final quote in state.quotes) {
+    for (final quote in state.quotesByDue()) {
       final due = state.dueInfoFor(quote);
       cards.add(_DecreeCard(
         text: quote.text,
