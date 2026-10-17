@@ -6,6 +6,8 @@ import '../models.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
 import '../widgets/offline_banner.dart';
+import '../widgets/swipe_to_delete.dart';
+import '../widgets/toast.dart';
 import 'quote_editor_screen.dart';
 
 /// "Edit decrees" (wireframe 7b): managers add, edit, and remove the
@@ -13,6 +15,10 @@ import 'quote_editor_screen.dart';
 /// (draft mode). Saving updates existing decrees in place (same ids), adds
 /// new ones and deletes removed ones, so members keep their read history and
 /// reminder choices for every decree that stays.
+///
+/// Removing a decree (the X, or swipe left and tap the trash) only takes it
+/// out of the draft. Nothing is deleted until Save, and Save asks first when
+/// it would delete anything for all members.
 class ChannelEditDecreesScreen extends StatefulWidget {
   const ChannelEditDecreesScreen({super.key, required this.channelId});
 
@@ -31,17 +37,33 @@ class _ChannelEditDecreesScreenState extends State<ChannelEditDecreesScreen> {
   bool _saving = false;
   bool _loadFailed = false;
 
+  /// Ids of the decrees that existed when the list loaded. Used to count how
+  /// many Save would delete (new, unsaved decrees have no id yet).
+  Set<String> _originalIds = {};
+
+  /// The id of the row whose trash button is showing (null = none).
+  final ValueNotifier<String?> _openRow = ValueNotifier<String?>(null);
+
   @override
   void initState() {
     super.initState();
     _load();
   }
 
+  @override
+  void dispose() {
+    _openRow.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     try {
       final d = await _service.fetchDecreesForEdit(widget.channelId);
       if (!mounted) return;
-      setState(() => _decrees = d);
+      setState(() {
+        _decrees = d;
+        _originalIds = d.map((x) => x.id).toSet();
+      });
     } catch (e) {
       if (!mounted) return;
       // Keep the list null (not empty): saving an empty list would delete
@@ -50,22 +72,63 @@ class _ChannelEditDecreesScreenState extends State<ChannelEditDecreesScreen> {
     }
   }
 
+  /// How many saved decrees are missing from the draft (what Save deletes).
+  int _removedCount(List<StoredDecree> decrees) {
+    final kept = decrees.map((d) => d.id).toSet();
+    return _originalIds.where((id) => !kept.contains(id)).length;
+  }
+
+  /// Asks before Save deletes decrees for every member. Cancel keeps the
+  /// draft as it is.
+  Future<bool> _confirmRemoval(int n) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(n == 1 ? 'Remove 1 decree?' : 'Remove $n decrees?'),
+        content: Text(
+          n == 1
+              ? 'This decree will be removed for all members. '
+                  'This can\u2019t be undone.'
+              : 'These $n decrees will be removed for all members. '
+                  'This can\u2019t be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remove',
+                style: TextStyle(color: Palette.danger)),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _saveAll() async {
     final decrees = _decrees;
     if (decrees == null || _saving) return;
     final state = AppScope.of(context);
+    final removed = _removedCount(decrees);
+    if (removed > 0) {
+      final ok = await _confirmRemoval(removed);
+      if (!ok || !mounted) return;
+    }
     setState(() => _saving = true);
     try {
       await _service.saveDecrees(widget.channelId, decrees);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Decrees saved')));
+      showToast(removed > 0
+          ? 'Decrees saved \u00b7 $removed removed'
+          : 'Decrees saved.');
       Navigator.of(context).pop();
     } catch (e) {
       final online = await state.checkConnection();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(online ? 'Could not save. Try again.' : offlineActionMessage)));
+      showToast(online ? 'Could not save. Try again.' : offlineActionMessage);
       setState(() => _saving = false);
     }
   }
@@ -169,26 +232,36 @@ class _ChannelEditDecreesScreenState extends State<ChannelEditDecreesScreen> {
                   separatorBuilder: (_, __) => const Divider(),
                   itemBuilder: (context, i) {
                     final d = decrees[i];
-                    return ListTile(
-                      title: Text(
-                        d.text.split('\n').first,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                    // ObjectKey: new decrees all have an empty id.
+                    return SwipeToDelete(
+                      key: ObjectKey(d),
+                      id: d.id.isEmpty ? 'new-${identityHashCode(d)}' : d.id,
+                      openRow: _openRow,
+                      // Staged only: nothing is deleted until Save.
+                      onDelete: () async {
+                        setState(() => decrees.remove(d));
+                        return true;
+                      },
+                      child: ListTile(
+                        title: Text(
+                          d.text.split('\n').first,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: d.text.contains('\n')
+                            ? Text(
+                                d.text.split('\n').skip(1).join(' '),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              )
+                            : null,
+                        trailing: IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => setState(() => decrees.remove(d)),
+                        ),
+                        onTap: () => _editDecree(i),
                       ),
-                      subtitle: d.text.contains('\n')
-                          ? Text(
-                              d.text.split('\n').skip(1).join(' '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            )
-                          : null,
-                      trailing: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () =>
-                            setState(() => decrees.removeAt(i)),
-                      ),
-                      onTap: () => _editDecree(i),
                     );
                   },
                 ),

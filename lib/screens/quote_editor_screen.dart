@@ -38,11 +38,20 @@ class QuoteEditorScreen extends StatefulWidget {
 }
 
 class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
+  /// The last minute of the day. Midnight at the END of a window is saved as
+  /// this, so the read still counts for the day it belongs to (a read at
+  /// 12:00 AM would count for the next day).
+  static const int _lastMinute = 23 * 60 + 59;
+
   late final TextEditingController _text;
   late int _target;
   late int _startMin;
   late int _endMin;
   late bool _remindersOn;
+
+  /// True when the end time was midnight and was saved as 11:59 PM, so a
+  /// short note explains the change.
+  bool _midnightEnd = false;
   String? _error;
   bool _saving = false;
 
@@ -52,8 +61,13 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
     final seed = widget.quote ?? widget.prefill ?? widget.seed;
     _text = TextEditingController(text: seed?.text ?? '');
     _target = seed?.targetPerDay ?? 1;
-    _startMin = seed?.windowStartMin ?? 8 * 60;
-    _endMin = seed?.windowEndMin ?? 20 * 60;
+    final start = seed?.windowStartMin ?? 8 * 60;
+    final end = seed?.windowEndMin ?? 20 * 60;
+    // Older data (and some channel decrees) store midnight at the end of the
+    // day as 24:00, which has no clock face. Treat it as 11:59 PM.
+    _midnightEnd = end > _lastMinute;
+    _startMin = start.clamp(0, _lastMinute).toInt();
+    _endMin = end.clamp(0, _lastMinute).toInt();
     _remindersOn = seed?.remindersOn ?? true;
   }
 
@@ -76,11 +90,29 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
       final minutes = picked.hour * 60 + picked.minute;
       if (start) {
         _startMin = minutes;
+      } else if (minutes == 0) {
+        // 12:00 AM as the last time means the end of the day.
+        _endMin = _lastMinute;
+        _midnightEnd = true;
       } else {
         _endMin = minutes;
+        _midnightEnd = false;
       }
     });
   }
+
+  /// The note shown under the last-time row when midnight was chosen.
+  List<Widget> _midnightNote() => [
+        if (_target > 1 && _midnightEnd)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+              'Midnight is saved as 11:59 PM so the read counts for the '
+              'same day.',
+              style: TextStyle(color: Palette.muted),
+            ),
+          ),
+      ];
 
   Future<void> _save() async {
     final text = _text.text.trim();
@@ -173,7 +205,8 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
               style: quoteStyle(size: 18),
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
-                hintText: 'Write or paste your decree here. You can edit it later.',
+                hintText:
+                    'Write or paste your decree here. You can edit it later.',
               ),
             ),
             const SizedBox(height: 24),
@@ -225,6 +258,7 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
                       style: const TextStyle(fontSize: 16)),
                   onTap: () => _pickTime(start: false),
                 ),
+              ..._midnightNote(),
               if (_target > 1)
                 const Padding(
                   padding: EdgeInsets.only(top: 4),
@@ -262,6 +296,7 @@ class _QuoteEditorScreenState extends State<QuoteEditorScreen> {
                         style: const TextStyle(fontSize: 16)),
                     onTap: () => _pickTime(start: false),
                   ),
+                ..._midnightNote(),
                 if (_target > 1)
                   const Padding(
                     padding: EdgeInsets.only(top: 4),

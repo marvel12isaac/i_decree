@@ -53,11 +53,17 @@ class Quote {
 
   /// Evenly spaced reminder times (minutes from midnight) across the window.
   /// One reminder a day fires at the window start.
+  ///
+  /// Times are kept within 0:00 to 23:59. A stored 24:00 (midnight at the end
+  /// of the day, which older data and some channel decrees carry) counts as
+  /// 11:59 PM, so it displays correctly and is due on the day it belongs to.
   List<int> reminderMinutes() {
     final n = targetPerDay.clamp(1, maxPerDay).toInt();
-    if (n == 1 || windowEndMin <= windowStartMin) return [windowStartMin];
-    final step = (windowEndMin - windowStartMin) / (n - 1);
-    return List<int>.generate(n, (i) => (windowStartMin + step * i).round());
+    final start = windowStartMin.clamp(0, 1439).toInt();
+    final end = windowEndMin.clamp(0, 1439).toInt();
+    if (n == 1 || end <= start) return [start];
+    final step = (end - start) / (n - 1);
+    return List<int>.generate(n, (i) => (start + step * i).round());
   }
 
   Map<String, dynamic> toJson() => {
