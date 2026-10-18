@@ -40,6 +40,12 @@ class IDecreeApp extends StatefulWidget {
 class _IDecreeAppState extends State<IDecreeApp>
     with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
+  /// The decree opened from a notification that is still on screen. A tap can
+  /// reach us twice (the launch details AND the tap callback, or the user
+  /// tapping again while the app is still starting), so a second request for
+  /// the same decree is ignored while it is already showing.
+  String? _notificationQuoteId;
   final ThemeData _lightTheme = buildTheme();
   final ThemeData _darkTheme = buildDarkTheme();
 
@@ -53,27 +59,43 @@ class _IDecreeAppState extends State<IDecreeApp>
   Future<void> _startReminders() async {
     final reminders = widget.state.reminders;
     await reminders.init(_openQuote);
+
+    // Open the decree the user tapped FIRST. Everything below (the
+    // permission prompt and re-scheduling every reminder) can take many
+    // seconds and must never sit in front of it.
+    final launchId = reminders.consumeLaunchQuoteId();
+    if (launchId != null) _openQuote(launchId);
+
     await reminders.requestPermission();
     // Re-schedule on every start, so reminders survive reboots and updates
     // even if the OS dropped them.
     await widget.state.syncReminders();
-    final launchId = reminders.consumeLaunchQuoteId();
 
     // final auth = AuthService(Supabase.instance.client);
     // final user = await auth.signInWithGoogle();
     // debugPrint('Signed in as: ${user?.id} / ${user?.email}');
-
-    if (launchId != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _openQuote(launchId));
-    }
   }
 
   /// Opens a quote when the user taps its notification.
   void _openQuote(String quoteId) {
     if (widget.state.quoteById(quoteId) == null) return;
-    _navigatorKey.currentState?.push(
-      MaterialPageRoute(builder: (_) => QuoteViewScreen(quoteId: quoteId)),
-    );
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) {
+      // The first frame is not built yet: try again right after it.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openQuote(quoteId));
+      return;
+    }
+    // Already showing this decree from a notification: do nothing, so Back
+    // goes straight to the list instead of through a second copy.
+    if (_notificationQuoteId == quoteId) return;
+    _notificationQuoteId = quoteId;
+    navigator
+        .push(
+          MaterialPageRoute(builder: (_) => QuoteViewScreen(quoteId: quoteId)),
+        )
+        .whenComplete(() {
+      if (_notificationQuoteId == quoteId) _notificationQuoteId = null;
+    });
   }
 
   @override

@@ -158,6 +158,33 @@ class MobileReminderService implements ReminderService {
 
   @override
   Future<void> syncAll(List<Quote> quotes) async {
+    // Re-scheduling is slow (one platform call per reminder) and several
+    // parts of the app ask for it around start-up. Never run two at once,
+    // since one's cancelAll would wipe the other's work: remember the
+    // latest request and run it once, right after the current run.
+    if (_syncing) {
+      _queuedSync = quotes;
+      return;
+    }
+    _syncing = true;
+    try {
+      var next = quotes;
+      while (true) {
+        await _syncOnce(next);
+        final queued = _queuedSync;
+        _queuedSync = null;
+        if (queued == null) break;
+        next = queued;
+      }
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  bool _syncing = false;
+  List<Quote>? _queuedSync;
+
+  Future<void> _syncOnce(List<Quote> quotes) async {
     // Cancel outside the try: if a later schedule throws we must not end up
     // in a state where cancel succeeded but we treated the whole run as failed.
     await _plugin.cancelAll();
