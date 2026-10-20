@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_state.dart';
+import '../fx.dart';
 import '../models.dart';
 import '../services/channel_service.dart';
 import '../theme.dart';
 import '../widgets/due_time.dart';
+import '../widgets/fx_widgets.dart';
 import '../widgets/read_crowns.dart';
 import '../widgets/sign_in_sheet.dart';
 import '../widgets/legacy_circles_prompt.dart';
@@ -457,8 +459,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              '$streak',
+                            CountUp(
+                              value: streak,
                               style: TextStyle(
                                 fontSize: 56,
                                 height: 1,
@@ -473,7 +475,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                _SavesBadge(tokens: state.tokens),
+                PulseOnce(
+                  trigger: state.tokens,
+                  child: _SavesBadge(tokens: state.tokens),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -566,6 +571,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Widget> _buildHome(BuildContext context, AppState state, AppColors c) {
     final channels = _channelsSorted(state);
     final discover = _buildDiscover(context, state, c);
+    // True once per app session, so rows animate on first load only and
+    // never on later rebuilds or reorders.
+    final animateRows = Fx.firstTime('home_channels');
 
     return [
       if (!state.reminders.supported)
@@ -601,8 +609,12 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Text('No channels yet', style: TextStyle(color: c.muted)),
         )
       else
-        for (final circle in channels) ...[
-          _channelRow(context, state, c, circle),
+        for (var i = 0; i < channels.length; i++) ...[
+          FadeSlideIn(
+            animate: animateRows,
+            index: i,
+            child: _channelRow(context, state, c, channels[i]),
+          ),
           const Divider(),
         ],
       if (channels.isNotEmpty) ...discover,
@@ -622,6 +634,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// personal decree, then the dashed add card.
   Widget _buildDecreeCards(BuildContext context, AppState state, AppColors c) {
     final cards = <Widget>[];
+    final animateCards = Fx.firstTime('home_cards');
 
     // Featured card: rotating quote; tapping opens My Decrees.
     if (state.featuredQuotes.isNotEmpty) {
@@ -642,7 +655,7 @@ class _HomeScreenState extends State<HomeScreen> {
         done: state.readsTodayFor(quote.id),
         target: quote.targetPerDay,
         onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => QuoteViewScreen(quoteId: quote.id)),
+          FxPageRoute(builder: (_) => QuoteViewScreen(quoteId: quote.id)),
         ),
       ));
     }
@@ -662,7 +675,11 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
         itemCount: cards.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) => cards[i],
+        itemBuilder: (_, i) => FadeSlideIn(
+          animate: animateCards,
+          index: i,
+          child: cards[i],
+        ),
       ),
     );
   }
@@ -1679,9 +1696,9 @@ class _DecreeHitRow extends StatelessWidget {
     final c = AppColors.of(context);
     return InkWell(
       onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => QuoteViewScreen(quoteId: hit.quote.id),
-        ),
+      FxPageRoute(
+        builder: (_) => QuoteViewScreen(quoteId: hit.quote.id),
+      ),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),

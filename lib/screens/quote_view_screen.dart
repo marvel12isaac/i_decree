@@ -4,10 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_state.dart';
+import '../fx.dart';
 import '../models.dart';
 import '../services/channel_service.dart';
+import '../widgets/fx_widgets.dart';
 import '../widgets/hold_to_read_button.dart';
 import '../widgets/quote_text.dart';
+import '../widgets/read_crowns.dart';
 import '../widgets/reminder_bell.dart';
 import '../widgets/report_dialog.dart';
 import '../theme.dart';
@@ -61,11 +64,19 @@ class QuoteViewScreen extends StatefulWidget {
 class _QuoteViewScreenState extends State<QuoteViewScreen> {
   static const Duration _unlockDelay = Duration(seconds: 5);
 
+  /// How long the "Decreed" panel stays up before the screen closes
+  /// (shorter in Reduced mode, skipped in Off mode).
+  static const Duration _decreedPanelTime = Duration(milliseconds: 700);
+
   final ScrollController _scroll = ScrollController();
   Timer? _delayTimer;
   bool _delayDone = false;
   bool _atEnd = false;
   bool _joinBusy = false;
+
+  /// Set right after a read completes: today's read count, shown in the
+  /// "Decreed" panel in place of the hold button.
+  int? _decreedCount;
 
   // The user's role in this decree's channel (for managers' edit options).
   // Null until known; the channel icons stay hidden until then so they
@@ -182,7 +193,7 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
       return;
     }
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => QuoteViewScreen(quoteId: live.id)),
+      FxPageRoute(builder: (_) => QuoteViewScreen(quoteId: live.id)),
     );
   }
 
@@ -193,12 +204,20 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     if (quote == null) return;
     await state.registerRead(quote.id);
     if (!mounted) return;
+    // Milestone check (streak of 7, 30, 100, or the very first read).
+    Fx.afterRead(context, state);
     final today = state.readsTodayFor(quote.id);
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
       SnackBar(
           content: Text('Decreed. $today of ${quote.targetPerDay} today.')),
     );
+    if (!Fx.isOff) {
+      // Show the "Decreed" panel with the new crown popping in, then close.
+      setState(() => _decreedCount = today);
+      await Future<void>.delayed(Fx.dur(_decreedPanelTime));
+      if (!mounted) return; // the user already left
+    }
     if (Navigator.of(context).canPop()) Navigator.of(context).pop();
   }
 
@@ -361,6 +380,47 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     );
   }
 
+  /// Replaces the hold button for a moment after a read: "Decreed" plus
+  /// today's crowns, with the crown just earned popping in. Same height as
+  /// the button so nothing jumps.
+  Widget _buildDecreedPanel(BuildContext context, Quote quote, int today) {
+    final c = AppColors.of(context);
+    final target = quote.targetPerDay;
+    final popIndex = (today >= 1 && today <= target) ? today - 1 : null;
+    return Container(
+      height: 60,
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      decoration: BoxDecoration(
+        color: c.teal.withAlpha(31),
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.check_circle_outline, size: 20, color: c.teal),
+          const SizedBox(width: 8),
+          Text(
+            'Decreed',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: c.teal,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: ReadCrowns(
+              done: today,
+              target: target,
+              size: 20,
+              popIndex: popIndex,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
@@ -392,6 +452,8 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     final unlocked = _delayDone && _atEnd;
     final lockedLabel =
         !_delayDone ? 'Take a moment to decree' : 'Scroll to the end to continue';
+
+    final decreedCount = _decreedCount;
 
     return Scaffold(
       appBar: AppBar(
@@ -452,7 +514,12 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    QuoteTitleBody(text: quote.text, size: 24, compact: false),
+                    // The decree text fades in and rises slightly, once per
+                    // time the screen opens.
+                    FadeSlideIn(
+                      child: QuoteTitleBody(
+                          text: quote.text, size: 24, compact: false),
+                    ),
                     if (decreedToday) ...[
                       const SizedBox(height: 16),
                       Row(
@@ -479,11 +546,13 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
               padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
               child: _previewMode
                   ? _buildJoinActions(context)
-                  : HoldToReadButton(
-                      unlocked: unlocked,
-                      lockedLabel: lockedLabel,
-                      onCompleted: _complete,
-                    ),
+                  : decreedCount != null
+                      ? _buildDecreedPanel(context, quote, decreedCount)
+                      : HoldToReadButton(
+                          unlocked: unlocked,
+                          lockedLabel: lockedLabel,
+                          onCompleted: _complete,
+                        ),
             ),
           ],
         ),

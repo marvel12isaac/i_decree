@@ -4,6 +4,11 @@
 // flutter_local_notifications 22.x. If you upgrade the package, check its
 // changelog: parameters of initialize()/zonedSchedule() have changed between
 // major versions.
+//
+// Start-up shape: init() is QUICK (register the plugin, read which
+// notification launched the app). The slow, scheduling-only setup (timezone
+// database, timezone lookup, exact-alarm check) runs lazily, the first time
+// syncAll needs it, which is after the first frame.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -21,14 +26,18 @@ class MobileReminderService implements ReminderService {
   void Function(String quoteId)? _onOpenQuote;
   String? _launchQuoteId;
 
-  // Cached in init(). On Android 12+ with SCHEDULE_EXACT_ALARM revoked,
-  // exactAllowWhileIdle THROWS rather than failing silently — so we must
-  // know before scheduling, not catch it after.
+  // Cached in _prepareScheduling(). On Android 12+ with SCHEDULE_EXACT_ALARM
+  // revoked, exactAllowWhileIdle THROWS rather than failing silently, so we
+  // must know before scheduling, not catch it after.
   bool _exactAlarmsAllowed = false;
 
   /// True when the IANA timezone lookup failed and we fell back to using
   /// the device's raw UTC offset for scheduling.
   bool _tzFallback = false;
+
+  /// Shared by every caller, so the timezone setup runs once even when
+  /// several syncs start at the same moment.
+  Future<void>? _schedulingReady;
 
   static const NotificationDetails _details = NotificationDetails(
     android: AndroidNotificationDetails(
@@ -37,7 +46,7 @@ class MobileReminderService implements ReminderService {
       channelDescription: 'Reminders to read your Decrees',
       importance: Importance.high,
       priority: Priority.high,
-      // Must be a flat single-colour drawable — NOT a mipmap launcher icon.
+      // Must be a flat single-colour drawable, NOT a mipmap launcher icon.
       // The broadcast receiver resolves this outside the app process; a mipmap
       // icon returns a null resource ID there and crashes with NullPointerException.
       icon: 'ic_stat_idecree',
@@ -62,39 +71,8 @@ class MobileReminderService implements ReminderService {
 
   @override
   Future<void> init(void Function(String quoteId) onOpenQuote) async {
+    final sw = Stopwatch()..start();
     _onOpenQuote = onOpenQuote;
-
-    tzdata.initializeTimeZones();
-    // The timezone package's database omits some IANA alias zones (notably
-    // Africa/Accra — a Link to Africa/Abidjan). Map known aliases before
-    // giving up entirely.
-    const tzAliases = <String, String>{
-      'Africa/Accra': 'Africa/Abidjan',
-      // Add more aliases here as real devices surface them.
-    };
-
-    try {
-      final dynamic info = await FlutterTimezone.getLocalTimezone();
-      final String name = info is String ? info : info.identifier as String;
-      try {
-        tz.setLocalLocation(tz.getLocation(name));
-      } on tz.LocationNotFoundException {
-        final alias = tzAliases[name];
-        if (alias != null) {
-          tz.setLocalLocation(tz.getLocation(alias));
-          // debugPrint('Timezone "$name" not in database; used alias "$alias".');
-        } else {
-          rethrow;
-        }
-      }
-    } catch (e) {
-      // Last resort: use the device's own UTC offset, which is always
-      // correct for the user's current location. We do NOT set tz.local to
-      // UTC — that would schedule at the wrong wall-clock time.
-      _tzFallback = true;
-      tz.setLocalLocation(tz.UTC);
-      // debugPrint('Timezone lookup failed: $e — using device UTC offset.');
-    }
 
     const settings = InitializationSettings(
       android: AndroidInitializationSettings('@drawable/ic_stat_idecree'),
@@ -112,35 +90,85 @@ class MobileReminderService implements ReminderService {
         if (payload != null) _onOpenQuote?.call(payload);
       },
     );
+    debugPrint('[startup] reminders: plugin.initialize '
+        '${sw.elapsedMilliseconds} ms');
+
+    final launch = await _plugin.getNotificationAppLaunchDetails();
+    if (launch != null && launch.didNotificationLaunchApp) {
+      _launchQuoteId = launch.notificationResponse?.payload;
+    }
+    debugPrint('[startup] reminders: launch details read '
+        '${sw.elapsedMilliseconds} ms '
+        '(launch decree: ${_launchQuoteId ?? "none"})');
+  }
+
+  Future<void> _ensureScheduling() =>
+      _schedulingReady ??= _prepareScheduling();
+
+  /// The slow part of start-up that only scheduling needs.
+  Future<void> _prepareScheduling() async {
+    final sw = Stopwatch()..start();
+
+    tzdata.initializeTimeZones();
+    debugPrint('[startup] reminders: timezone database loaded '
+        '${sw.elapsedMilliseconds} ms');
+    // The timezone package's database omits some IANA alias zones (notably
+    // Africa/Accra, a Link to Africa/Abidjan). Map known aliases before
+    // giving up entirely.
+    const tzAliases = <String, String>{
+      'Africa/Accra': 'Africa/Abidjan',
+      // Add more aliases here as real devices surface them.
+    };
+
+    try {
+      final dynamic info = await FlutterTimezone.getLocalTimezone();
+      final String name = info is String ? info : info.identifier as String;
+      try {
+        tz.setLocalLocation(tz.getLocation(name));
+      } on tz.LocationNotFoundException {
+        final alias = tzAliases[name];
+        if (alias != null) {
+          tz.setLocalLocation(tz.getLocation(alias));
+        } else {
+          rethrow;
+        }
+      }
+    } catch (e) {
+      // Last resort: use the device's own UTC offset, which is always
+      // correct for the user's current location. We do NOT set tz.local to
+      // UTC for scheduling: that would schedule at the wrong wall-clock time.
+      _tzFallback = true;
+      tz.setLocalLocation(tz.UTC);
+    }
+    debugPrint('[startup] reminders: timezone set '
+        '${sw.elapsedMilliseconds} ms (fallback: $_tzFallback)');
 
     // Capability check: exact alarms may be revoked by the user (Android 12+)
     // or unavailable on some OEMs. If the check itself throws, assume NO.
     try {
       final android = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
-      _exactAlarmsAllowed = await android?.canScheduleExactNotifications() ??
-          false;
+      _exactAlarmsAllowed =
+          await android?.canScheduleExactNotifications() ?? false;
     } catch (e) {
       debugPrint('Exact-alarm capability check failed: $e');
       _exactAlarmsAllowed = false;
     }
-    debugPrint('Exact alarms allowed: $_exactAlarmsAllowed');
-
-    final launch = await _plugin.getNotificationAppLaunchDetails();
-    if (launch != null && launch.didNotificationLaunchApp) {
-      _launchQuoteId = launch.notificationResponse?.payload;
-    }
+    debugPrint('[startup] reminders: scheduling ready '
+        '${sw.elapsedMilliseconds} ms (exact alarms: $_exactAlarmsAllowed)');
   }
 
   @override
   Future<bool> requestPermission() async {
     try {
-      final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
       if (android != null) {
         final granted = await android.requestNotificationsPermission();
         return granted ?? true;
       }
-      final ios = _plugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+      final ios = _plugin.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
       if (ios != null) {
         final granted = await ios.requestPermissions(
           alert: true,
@@ -185,9 +213,16 @@ class MobileReminderService implements ReminderService {
   List<Quote>? _queuedSync;
 
   Future<void> _syncOnce(List<Quote> quotes) async {
+    final sw = Stopwatch()..start();
+    // Timezone and exact-alarm setup must be done before anything is
+    // scheduled.
+    await _ensureScheduling();
+
     // Cancel outside the try: if a later schedule throws we must not end up
     // in a state where cancel succeeded but we treated the whole run as failed.
     await _plugin.cancelAll();
+    debugPrint('[startup] reminders: cancelAll done '
+        '${sw.elapsedMilliseconds} ms');
 
     final mode = _exactAlarmsAllowed
         ? AndroidScheduleMode.exactAllowWhileIdle
@@ -203,7 +238,7 @@ class MobileReminderService implements ReminderService {
         try {
           await _plugin.zonedSchedule(
             id: q.notifBase + i,
-            title: _title(q.text),            
+            title: _title(q.text),
             body: _preview(q.text),
             scheduledDate: _nextOccurrence(times[i]),
             notificationDetails: q.isCircle ? _channelDetails : _details,
@@ -223,6 +258,8 @@ class MobileReminderService implements ReminderService {
 
     debugPrint('Reminders scheduled: $scheduled, failed: $failed '
         '(mode: ${_exactAlarmsAllowed ? "exact" : "inexact"})');
+    debugPrint('[startup] reminders: sync finished '
+        '${sw.elapsedMilliseconds} ms');
   }
 
   @override

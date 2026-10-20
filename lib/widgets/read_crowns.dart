@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../theme.dart';
+import 'fx_widgets.dart';
 
 /// Today's read progress for one decree, combined with its due status on one
 /// line: the due/next/last-read text on the left, one crown per required
@@ -18,6 +19,7 @@ class ReadCrowns extends StatelessWidget {
     this.dueLabel,
     this.dueColor,
     this.size = 20,
+    this.popIndex,
   });
 
   /// Reads completed today.
@@ -31,6 +33,11 @@ class ReadCrowns extends StatelessWidget {
   final Color? dueColor;
 
   final double size;
+
+  /// The crown (0-based) that was just earned. It pops in once when this
+  /// widget first appears; every other crown stays still. Leave null
+  /// everywhere except right after a read.
+  final int? popIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -47,11 +54,14 @@ class ReadCrowns extends StatelessWidget {
         runSpacing: 3,
         children: [
           for (var i = 0; i < total; i++)
-            Icon(
-              Symbols.crown,
-              fill: i < filled ? 1 : 0,
-              size: size,
-              color: i < filled ? c.teal : c.ring,
+            PopIn(
+              animate: i == popIndex,
+              child: Icon(
+                Symbols.crown,
+                fill: i < filled ? 1 : 0,
+                size: size,
+                color: i < filled ? c.teal : c.ring,
+              ),
             ),
           if (extra > 0)
             Container(

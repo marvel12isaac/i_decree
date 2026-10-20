@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../fx.dart';
 import '../theme.dart';
 
 /// A button you must press and hold (default 3 seconds) to complete.
@@ -48,7 +48,8 @@ class _HoldToReadButtonState extends State<HoldToReadButton>
   void _complete() {
     if (_completed) return;
     _completed = true;
-    HapticFeedback.mediumImpact();
+    // Goes through Fx so the "Off" effects setting also silences it.
+    Fx.success();
     widget.onCompleted();
   }
 
