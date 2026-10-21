@@ -48,6 +48,26 @@ class DueInfo {
   final DateTime? lastRead;
 }
 
+/// What a read did to the streak saves, for the message on the "Decreed"
+/// panel. [gained] is 0 when the milestone was reached but saves were
+/// already full.
+class SavesAward {
+  const SavesAward({
+    required this.milestone,
+    required this.gained,
+    required this.total,
+    required this.cap,
+  });
+
+  /// The streak length (in days) that paid out.
+  final int milestone;
+  final int gained;
+
+  /// Saves held after the award, and the most the streak allows.
+  final int total;
+  final int cap;
+}
+
 /// A circle as the screens see it: its name and its decrees as [Quote]s.
 class Circle {
   Circle({required this.id, required this.name, required this.quotes});
@@ -64,10 +84,16 @@ class Circle {
 /// - Daily streak: a day counts if at least one quote was read that day.
 /// - Per-quote streak: a day counts if that quote was read at least once,
 ///   even if its daily target is higher.
-/// - Freeze tokens: each user starts with [startingTokens]. When a day is
-///   missed while a streak is active, a token is used automatically and that
-///   day becomes a "frozen" day: it neither adds to nor breaks any streak.
-/// - No tokens left: the streak resets. The best daily streak is kept.
+/// - Streak saves (called "tokens" in the code): each user starts with
+///   [startingTokens]. When a day is missed while a streak is active, a save
+///   is used automatically and that day becomes a "frozen" day: it neither
+///   adds to nor breaks any streak.
+/// - Earning saves: +1 when the current streak reaches 7, 40, 100, 250 and
+///   365 days (1 year), 730 (2 years), 1095 (3 years), then every 365 days.
+///   Each milestone pays once per streak: a broken streak starts a new run,
+///   and its milestones can pay again. See [saveCapFor] for the most saves a
+///   streak can hold. A milestone reached when saves are full pays nothing.
+/// - No saves left: the streak resets. The best daily streak is kept.
 /// - A "day" is the device's local calendar day.
 class AppState extends ChangeNotifier {
   AppState(
@@ -95,6 +121,39 @@ class AppState extends ChangeNotifier {
   static const String _storageKey = 'app_state_v1';
   static const int startingTokens = 2;
   static const String _themeKey = 'theme_mode_v1';
+
+  // ------------------------------------------------------ streak-save rules
+
+  /// Streak lengths (days) that earn a save, up to 3 years. After the last
+  /// one there is a save every [_yearDays] days.
+  static const List<int> saveMilestones = [7, 40, 100, 250, 365, 730, 1095];
+  static const int _yearDays = 365;
+
+  /// The most saves a streak of [streak] days can hold: 3 under 40 days,
+  /// 4 from 40 days, 5 from 365 days (1 year).
+  static int saveCapFor(int streak) {
+    if (streak >= 365) return 5;
+    if (streak >= 40) return 4;
+    return 3;
+  }
+
+  /// The save milestones above [paidThrough] and up to [streak], in order.
+  static List<int> awardsBetween(int paidThrough, int streak) {
+    final out = <int>[];
+    for (final m in saveMilestones) {
+      if (m > paidThrough && m <= streak) out.add(m);
+    }
+    for (var y = saveMilestones.last + _yearDays; y <= streak; y += _yearDays) {
+      if (y > paidThrough) out.add(y);
+    }
+    return out;
+  }
+
+  /// The highest save milestone a streak of [streak] days has reached, or 0.
+  static int highestAwardAtOrBelow(int streak) {
+    final all = awardsBetween(0, streak);
+    return all.isEmpty ? 0 : all.last;
+  }
 
   final List<Quote> _quotes = [];
   final List<Circle> _circles = [];
@@ -161,6 +220,32 @@ class AppState extends ChangeNotifier {
   String? _evaluatedThrough; // last past day already checked for a miss
   int _nextNotifBase = 0;
 
+  // The saves "record": tokens plus the two numbers below always travel
+  // together, stamped with when they last changed, so a backup merge can
+  // keep the newer one.
+  //
+  /// When the saves record last changed. Null on a device that has never
+  /// changed it (a fresh install, or data from before saves were earned).
+  DateTime? savesUpdatedAt;
+
+  /// The highest save milestone already paid in the CURRENT streak run, so
+  /// reading twice in a day (or restoring a backup) never pays twice. Reset
+  /// to 0 when the streak breaks.
+  int _savesPaidThrough = 0;
+
+  /// The streak length at the last evaluation. A lower streak now means the
+  /// streak broke and a new run began.
+  int _lastStreakSeen = 0;
+
+  /// Set when the saved data has no saves record yet (data from before saves
+  /// were earned): the paid-through mark is set up once from the current
+  /// streak, so nobody is back-paid for milestones they already passed.
+  bool _needsSavesMigration = false;
+
+  /// The save award from the read that just completed, for the decree screen
+  /// to show. Taken once with [takeSavesAward].
+  SavesAward? _pendingAward;
+
   // ------------------------------------------------------- identity / auth
 
   bool get isSignedIn => Supabase.instance.client.auth.currentUser != null;
@@ -197,6 +282,19 @@ class AppState extends ChangeNotifier {
     }
     state._loadThemeMode();
     state.processMissedDays();
+
+    // Data saved before saves could be earned has no saves record: set it up
+    // from the current streak (after missed days were handled, so the streak
+    // is right) so nobody is back-paid for milestones already behind them.
+    if (state._needsSavesMigration || raw == null) {
+      final streak = state.dailyStreak();
+      state._savesPaidThrough = highestAwardAtOrBelow(streak);
+      state._lastStreakSeen = streak;
+      state._needsSavesMigration = false;
+      // Write it now: otherwise a restart before the next save would find a
+      // saves record with an empty paid-through mark and back-pay milestones.
+      unawaited(state._save());
+    }
 
     // The old hosted-JSON circles now live in Supabase as channels: carry any
     // read history over and work out whether to show the "moved" prompt.
@@ -253,6 +351,16 @@ class AppState extends ChangeNotifier {
     final lastRead = j['lastReadAt'] as Map<String, dynamic>? ?? {};
     _lastReadAt.addAll(
         lastRead.map((id, iso) => MapEntry(id, DateTime.parse(iso as String))));
+
+    // The saves record (absent in data saved before saves were earned).
+    if (j.containsKey('savesPaidThrough')) {
+      _savesPaidThrough = (j['savesPaidThrough'] as int?) ?? 0;
+      _lastStreakSeen = (j['lastStreakSeen'] as int?) ?? 0;
+      final stamp = j['savesUpdatedAt'] as String?;
+      savesUpdatedAt = stamp == null ? null : DateTime.tryParse(stamp);
+    } else {
+      _needsSavesMigration = true;
+    }
   }
 
   // ---------------------------------------------------------------- backups
@@ -267,9 +375,12 @@ class AppState extends ChangeNotifier {
   /// - reads: per quote per day, take the MAX (reads only accumulate).
   /// - quotes: union by id; on id conflict the later edit wins
   ///   (updatedAt; null counts as oldest — covers pre-stamp quotes).
-  /// - tokens: backup is authoritative downward (anti-abuse — a stale
-  ///   backup can never refill tokens); bestDaily takes the max.
-  /// - frozenDays: union.
+  /// - saves record (tokens, paid-through mark, last streak): the NEWER one
+  ///   wins as a whole (by savesUpdatedAt; null counts as oldest). A backup
+  ///   from before saves were stamped can only ever LOWER tokens (a stale
+  ///   backup must not refill them), and milestones already behind the
+  ///   restored streak are marked paid, so nobody is back-paid.
+  /// - bestDaily takes the max; frozenDays: union.
   /// - evaluatedThrough: take the EARLIER date so missed-day processing
   ///   re-runs over any gap.
   /// Returns true if anything changed (caller saves + notifies).
@@ -315,11 +426,37 @@ class AppState extends ChangeNotifier {
       }
     }
 
-    // Tokens: backup is authoritative downward (prevents clear-cache refill).
+    // Saves record: the newer one wins as a whole.
     final remoteTokens = (j['tokens'] as int?) ?? startingTokens;
-    if (remoteTokens < tokens) {
-      tokens = remoteTokens;
-      changed = true;
+    final remoteStampText = j['savesUpdatedAt'] as String?;
+    final remoteSavesStamp =
+        remoteStampText == null ? null : DateTime.tryParse(remoteStampText);
+    if (remoteSavesStamp != null) {
+      final localSavesStamp = savesUpdatedAt;
+      if (localSavesStamp == null || remoteSavesStamp.isAfter(localSavesStamp)) {
+        tokens = remoteTokens;
+        _savesPaidThrough = (j['savesPaidThrough'] as int?) ?? _savesPaidThrough;
+        _lastStreakSeen = (j['lastStreakSeen'] as int?) ?? _lastStreakSeen;
+        savesUpdatedAt = remoteSavesStamp;
+        changed = true;
+      }
+    } else {
+      // An older backup with no stamp: never let it raise tokens.
+      if (remoteTokens < tokens) {
+        tokens = remoteTokens;
+        changed = true;
+      }
+      // And no back pay for milestones already behind the restored streak.
+      final streak = dailyStreak();
+      final behind = highestAwardAtOrBelow(streak);
+      if (behind > _savesPaidThrough) {
+        _savesPaidThrough = behind;
+        changed = true;
+      }
+      if (streak > _lastStreakSeen) {
+        _lastStreakSeen = streak;
+        changed = true;
+      }
     }
 
     // Best streak: max.
@@ -354,6 +491,9 @@ class AppState extends ChangeNotifier {
         'reads': _reads,
         'frozenDays': _frozenDays.toList(),
         'tokens': tokens,
+        'savesUpdatedAt': savesUpdatedAt?.toIso8601String(),
+        'savesPaidThrough': _savesPaidThrough,
+        'lastStreakSeen': _lastStreakSeen,
         'bestDaily': bestDaily,
         'evaluatedThrough': _evaluatedThrough,
         'nextNotifBase': _nextNotifBase,
@@ -981,6 +1121,9 @@ class AppState extends ChangeNotifier {
 
   /// Call when the user completes a read (after the long-press).
   ///
+  /// Also pays any streak save the read has earned (see [saveMilestones]);
+  /// the decree screen picks the result up with [takeSavesAward].
+  ///
   /// Channel-decree reads by MEMBERS are uploaded to read_events
   /// (fire-and-forget, cumulative count) — this is what creator stats are
   /// built from. Personal reads and non-member reads stay local-only.
@@ -993,10 +1136,64 @@ class AppState extends ChangeNotifier {
     _lastReadAt[quoteId] = now;
     final streak = dailyStreak();
     if (streak > bestDaily) bestDaily = streak;
+    _evaluateSaves();
     await _save();
     notifyListeners();
     _maybeUploadRead(quoteId, key);
   }
+
+  // ----------------------------------------------------------- streak saves
+
+  /// The save award from the read that just finished, or null. Returns it
+  /// once: asking again gives null.
+  SavesAward? takeSavesAward() {
+    final award = _pendingAward;
+    _pendingAward = null;
+    return award;
+  }
+
+  /// Works out what the streak has earned, after a read. Safe to call more
+  /// than once in a day: a milestone pays once per streak run.
+  void _evaluateSaves() {
+    final streak = dailyStreak();
+    var changed = false;
+
+    // A shorter streak than last time means it broke: a new run begins, and
+    // its milestones can pay out again.
+    if (streak < _lastStreakSeen) {
+      _savesPaidThrough = 0;
+      changed = true;
+    }
+    if (streak != _lastStreakSeen) {
+      _lastStreakSeen = streak;
+      changed = true;
+    }
+
+    final due = awardsBetween(_savesPaidThrough, streak);
+    if (due.isNotEmpty) {
+      final cap = saveCapFor(streak);
+      var gained = 0;
+      for (var i = 0; i < due.length; i++) {
+        // Never above the cap; a full set of saves just stays full.
+        if (tokens < cap) {
+          tokens++;
+          gained++;
+        }
+      }
+      _savesPaidThrough = due.last;
+      _pendingAward = SavesAward(
+        milestone: due.last,
+        gained: gained,
+        total: tokens,
+        cap: cap,
+      );
+      changed = true;
+    }
+
+    if (changed) savesUpdatedAt = clock();
+  }
+
+  // ---------------------------------------------------------------- uploads
 
   /// Fire-and-forget upload of a channel-decree read by a member.
   void _maybeUploadRead(String quoteId, String dayK) {
@@ -1395,7 +1592,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// Checks every past day since the last check. If a day was missed while a
-  /// streak was active and a token is available, uses a token to freeze it.
+  /// streak was active and a save is available, uses a save to freeze it.
   /// Call at startup and whenever the app returns to the foreground.
   void processMissedDays() {
     final now = clock();
@@ -1420,6 +1617,7 @@ class AppState extends ChangeNotifier {
       final missed = _readsOnDayAll(key) == 0 && !_frozenDays.contains(key);
       if (missed && streakWasActive && tokens > 0) {
         tokens--;
+        savesUpdatedAt = now; // a used save is a change to the saves record
         _frozenDays.add(key);
         changed = true;
       }

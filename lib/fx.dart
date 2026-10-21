@@ -157,15 +157,41 @@ class Fx {
   static String _adjective(int days) =>
       _isYear(days) ? '${days ~/ _yearDays}-year' : '$days-day';
 
-  /// Call right after a read has been registered. Celebrates a streak
-  /// milestone, or the very first read, once each, ever, on this device.
-  /// Returns the message that goes with the celebration, or null when there
-  /// is nothing to celebrate. The caller shows it (in the "Decreed" panel,
-  /// or in a toast when effects are off).
+  /// Call right after a read has been registered. Plays the celebration for
+  /// a streak milestone or the very first read (once each, ever, on this
+  /// device) and picks up any streak save the read earned. Returns the
+  /// message for the "Decreed" panel (or the toast when effects are off), or
+  /// null when there is nothing to say.
   ///
-  /// Someone already past a milestone is celebrated for the highest one
-  /// they have reached; the lower ones are marked done quietly.
+  /// The two are separate: confetti plays once ever per milestone, but a
+  /// save can be earned again on a later streak, in which case the message
+  /// shows without confetti.
   static String? afterRead(BuildContext context, AppState app) {
+    final award = app.takeSavesAward(); // always taken, so it shows once
+    final celebration = _milestoneMessage(context, app);
+
+    String? savesLine;
+    if (award != null) {
+      final what = award.gained == 1 ? 'save' : 'saves';
+      savesLine = award.gained > 0
+          ? '+${award.gained} $what (${award.total} of ${award.cap})'
+          : 'Saves are full (${award.total} of ${award.cap})';
+    }
+
+    if (celebration != null && savesLine != null) {
+      return '$celebration\n$savesLine.';
+    }
+    if (celebration != null) return celebration;
+    if (award != null && savesLine != null) {
+      return '${_adjective(award.milestone)} streak! $savesLine.';
+    }
+    return null;
+  }
+
+  /// The celebration for the highest streak milestone reached, or the first
+  /// read, when it has not played yet. Someone already past a milestone is
+  /// celebrated for the highest one; the lower ones are marked done quietly.
+  static String? _milestoneMessage(BuildContext context, AppState app) {
     final reached = _highestReached(app.dailyStreak());
     if (reached != null) {
       var changed = false;
