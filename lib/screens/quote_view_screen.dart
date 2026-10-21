@@ -17,6 +17,28 @@ import '../theme.dart';
 import '../widgets/sign_in_sheet.dart';
 import 'quote_editor_screen.dart';
 
+/// The decree pages that are open right now, by decree id. A notification tap
+/// uses it to find a page that is already on screen (even under other
+/// screens) instead of opening a second copy of the same decree.
+class OpenDecrees {
+  OpenDecrees._();
+
+  static final Map<String, Route<dynamic>> _routes = {};
+
+  static void register(String quoteId, Route<dynamic> route) =>
+      _routes[quoteId] = route;
+
+  static void unregister(String quoteId, Route<dynamic> route) {
+    if (identical(_routes[quoteId], route)) _routes.remove(quoteId);
+  }
+
+  /// The route showing this decree, or null if it isn't open.
+  static Route<dynamic>? routeFor(String quoteId) {
+    final route = _routes[quoteId];
+    return (route != null && route.isActive) ? route : null;
+  }
+}
+
 /// Shows one quote. The Read button unlocks after a short fixed delay and,
 /// for quotes long enough to scroll, only once the user reaches the end.
 ///
@@ -79,6 +101,9 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
 
   Completer<void>? _panelWait;
   Timer? _panelTimer;
+
+  /// This page's route, as registered in [OpenDecrees].
+  Route<dynamic>? _registeredRoute;
 
   /// Waits [time], or until the panel is tapped.
   Future<void> _waitOnPanel(Duration time) {
@@ -144,7 +169,22 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final id = widget.quoteId;
+    if (_previewMode || id == null) return;
+    final route = ModalRoute.of(context);
+    if (route != null && !identical(route, _registeredRoute)) {
+      _registeredRoute = route;
+      OpenDecrees.register(id, route);
+    }
+  }
+
+  @override
   void dispose() {
+    final id = widget.quoteId;
+    final route = _registeredRoute;
+    if (id != null && route != null) OpenDecrees.unregister(id, route);
     _delayTimer?.cancel();
     _endPanelWait();
     _scroll.dispose();

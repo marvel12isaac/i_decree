@@ -169,7 +169,7 @@ class _ChangeBounceState extends State<ChangeBounce>
     final gain = widget.value > oldWidget.value;
     runWhenShown(() {
       _gain = gain;
-      _controller.duration = const Duration(milliseconds: 900);
+      _controller.duration = const Duration(milliseconds: 1400);
       _controller.forward(from: 0);
     });
   }

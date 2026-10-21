@@ -112,11 +112,13 @@ class _IDecreeAppState extends State<IDecreeApp>
     with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
-  /// The decree opened from a notification that is still on screen. A tap can
-  /// reach us twice (the launch details AND the tap callback, or the user
-  /// tapping again while the app is still starting), so a second request for
-  /// the same decree is ignored while it is already showing.
-  String? _notificationQuoteId;
+  /// The last notification tap we acted on. The same tap can reach us twice
+  /// within a moment (the launch details AND the tap callback), so a repeat
+  /// of the same decree inside this window is ignored.
+  String? _lastTapId;
+  DateTime? _lastTapAt;
+  static const Duration _repeatTapWindow = Duration(seconds: 1);
+
   final ThemeData _lightTheme = buildTheme();
   final ThemeData _darkTheme = buildDarkTheme();
 
@@ -124,9 +126,6 @@ class _IDecreeAppState extends State<IDecreeApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // The launch decree is on screen from the first frame (see
-    // _initialRoutes), so it counts as already open.
-    _notificationQuoteId = widget.launchQuoteId;
     widget.opener.attach(_openQuote);
     WidgetsBinding.instance.addPostFrameCallback((_) => _afterFirstFrame());
   }
@@ -161,18 +160,22 @@ class _IDecreeAppState extends State<IDecreeApp>
       case '/decree':
         final id = widget.launchQuoteId;
         if (id == null) return null;
-        final route = FxPageRoute<void>(
+        return FxPageRoute<void>(
           builder: (_) => QuoteViewScreen(quoteId: id),
           settings: settings,
         );
-        route.popped.whenComplete(() {
-          if (_notificationQuoteId == id) _notificationQuoteId = null;
-        });
-        return route;
     }
     return null;
   }
-  /// Opens a quote when the user taps its notification.
+
+  /// Handles a notification tap: "take me to this decree".
+  ///
+  /// - If that decree's page is already open, anywhere in the stack, close
+  ///   everything above it and show it (its state is kept).
+  /// - Otherwise close everything above Home (open editors, lists, dialogs;
+  ///   any unsaved edit is discarded) and show a fresh decree page.
+  ///
+  /// Either way there is never a second page for the same decree.
   void _openQuote(String quoteId) {
     if (widget.state.quoteById(quoteId) == null) return;
     final navigator = _navigatorKey.currentState;
@@ -181,17 +184,26 @@ class _IDecreeAppState extends State<IDecreeApp>
       WidgetsBinding.instance.addPostFrameCallback((_) => _openQuote(quoteId));
       return;
     }
-    // Already showing this decree from a notification: do nothing, so Back
-    // goes straight to the list instead of through a second copy.
-    if (_notificationQuoteId == quoteId) return;
-    _notificationQuoteId = quoteId;
-    navigator
-        .push(
-          FxPageRoute<void>(builder: (_) => QuoteViewScreen(quoteId: quoteId)),
-        )
-        .whenComplete(() {
-      if (_notificationQuoteId == quoteId) _notificationQuoteId = null;
-    });
+
+    final now = DateTime.now();
+    final lastAt = _lastTapAt;
+    if (_lastTapId == quoteId &&
+        lastAt != null &&
+        now.difference(lastAt) < _repeatTapWindow) {
+      return; // the same tap, delivered twice
+    }
+    _lastTapId = quoteId;
+    _lastTapAt = now;
+
+    final existing = OpenDecrees.routeFor(quoteId);
+    if (existing != null) {
+      navigator.popUntil((route) => identical(route, existing));
+      return;
+    }
+    navigator.pushAndRemoveUntil(
+      FxPageRoute<void>(builder: (_) => QuoteViewScreen(quoteId: quoteId)),
+      (route) => route.isFirst,
+    );
   }
 
   @override
