@@ -7,7 +7,7 @@
 //   animation scale 0 is on. VERIFY on a real phone: this relies on
 //   PlatformDispatcher.accessibilityFeatures.disableAnimations.
 // - Only scale, opacity and position are animated. No blur, no animated shadows.
-// - UI feedback 150-400 ms; the celebration at most ~1.4 s.
+// - UI feedback roughly 270-650 ms; the celebration about 2 s.
 
 import 'dart:async';
 
@@ -35,10 +35,10 @@ class Fx {
 
   // ----------------------------------------------------------- timings
 
-  static const Duration quick = Duration(milliseconds: 180);
-  static const Duration standard = Duration(milliseconds: 280);
-  static const Duration pop = Duration(milliseconds: 320);
-  static const Duration celebrate = Duration(milliseconds: 1400);
+  static const Duration quick = Duration(milliseconds: 270);
+  static const Duration standard = Duration(milliseconds: 420);
+  static const Duration pop = Duration(milliseconds: 480);
+  static const Duration celebrate = Duration(milliseconds: 2100);
 
   static const Curve easeOut = Curves.easeOutCubic;
   static const Curve springy = Curves.easeOutBack;
@@ -111,35 +111,106 @@ class Fx {
 
   // ------------------------------------------------------- milestones
 
-  static const List<int> streakMilestones = [7, 30, 100];
+  /// Streak lengths (in days) that get a celebration, up to 3 years. After
+  /// that there is one every year (4 years, 5 years, and so on).
+  static const List<int> streakMilestones = [
+    3, 7, 21, 40, 70, 100, 250, 365, 500, 730, 1000, 1095,
+  ];
 
-  /// Call right after a read has been registered (after
-  /// `AppState.registerRead`). Celebrates a streak of 7, 30 or 100, or the
-  /// very first read, once each, ever, on this device.
-  static void afterRead(BuildContext context, AppState app) {
-    final streak = app.dailyStreak();
+  static const int _yearDays = 365;
+
+  /// What the Settings page tells people about the celebrations.
+  static String get milestoneSummary =>
+      'your first decree, streaks of 3, 7, 21, 40, 70, 100, 250, 500 and '
+      '1000 days, and every year (1 year, 2 years, 3 years and so on)';
+
+  /// The highest milestone a streak of [streak] days has reached, or null.
+  static int? _highestReached(int streak) {
+    if (streak >= streakMilestones.last) {
+      return (streak ~/ _yearDays) * _yearDays;
+    }
+    int? best;
     for (final m in streakMilestones) {
-      if (streak == m) {
-        _celebrateOnce(context, 'streak_$m');
-        return;
-      }
+      if (streak >= m) best = m;
     }
-    if (app.readsTodayAll() >= 1 && app.bestDaily <= 1) {
-      _celebrateOnce(context, 'first_read');
-    }
+    return best;
   }
 
-  static void _celebrateOnce(BuildContext context, String id) {
-    if (!_celebrated.add(id)) return;
+  /// The first milestone above [days].
+  static int _nextAfter(int days) {
+    for (final m in streakMilestones) {
+      if (m > days) return m;
+    }
+    return (days ~/ _yearDays + 1) * _yearDays;
+  }
+
+  static bool _isYear(int days) => days % _yearDays == 0;
+
+  /// "21 days", "1 year", "2 years".
+  static String _amount(int days) {
+    if (!_isYear(days)) return '$days days';
+    final years = days ~/ _yearDays;
+    return years == 1 ? '1 year' : '$years years';
+  }
+
+  /// "21-day", "1-year", "2-year".
+  static String _adjective(int days) =>
+      _isYear(days) ? '${days ~/ _yearDays}-year' : '$days-day';
+
+  /// Call right after a read has been registered. Celebrates a streak
+  /// milestone, or the very first read, once each, ever, on this device.
+  /// Returns the message that goes with the celebration, or null when there
+  /// is nothing to celebrate. The caller shows it (in the "Decreed" panel,
+  /// or in a toast when effects are off).
+  ///
+  /// Someone already past a milestone is celebrated for the highest one
+  /// they have reached; the lower ones are marked done quietly.
+  static String? afterRead(BuildContext context, AppState app) {
+    final reached = _highestReached(app.dailyStreak());
+    if (reached != null) {
+      var changed = false;
+      for (final m in streakMilestones) {
+        if (m < reached) changed = _celebrated.add('streak_$m') || changed;
+      }
+      for (var y = streakMilestones.last + _yearDays; y < reached;
+          y += _yearDays) {
+        changed = _celebrated.add('streak_$y') || changed;
+      }
+      if (changed) _persistCelebrated();
+      if (!_celebrateOnce(context, 'streak_$reached')) return null;
+      return '${_adjective(reached)} streak! '
+          'Next celebration at ${_amount(_nextAfter(reached))}.';
+    }
+    if (app.readsTodayAll() >= 1 && app.bestDaily <= 1) {
+      if (_celebrateOnce(context, 'first_read')) {
+        return 'First decree! '
+            'Next celebration at ${_amount(streakMilestones.first)}.';
+      }
+    }
+    return null;
+  }
+
+  static void _persistCelebrated() {
     final prefs = _prefs;
     if (prefs != null) {
       unawaited(prefs.setStringList(_celebratedKey, _celebrated.toList()));
     }
-    // Marked as done even when effects are reduced, so it never pops up
-    // later out of the blue.
-    if (isOff) return;
+  }
+
+  /// Plays the celebration for [id] unless it already happened. True if it
+  /// is new (so the caller should show its message).
+  static bool _celebrateOnce(BuildContext context, String id) {
+    // Marked as done even when effects are reduced or off, so it never pops
+    // up later out of the blue.
+    if (!_celebrated.add(id)) return false;
+    _persistCelebrated();
+    if (isOff) return true;
     unawaited(HapticFeedback.heavyImpact());
-    if (!isFull) return;
+    if (isFull) _playConfetti(context);
+    return true;
+  }
+
+  static void _playConfetti(BuildContext context) {
     final overlay = Overlay.maybeOf(context, rootOverlay: true);
     if (overlay == null) return;
     late final OverlayEntry entry;
@@ -151,6 +222,21 @@ class Fx {
       ),
     );
     overlay.insert(entry);
+  }
+
+  // -------------------------------------------------- debug-only helpers
+
+  /// Forgets which celebrations have played, so they can be tested again.
+  static Future<void> resetCelebrations() async {
+    _celebrated.clear();
+    await _prefs?.remove(_celebratedKey);
+  }
+
+  /// Plays the confetti on demand (for testing).
+  static void previewConfetti(BuildContext context) {
+    if (isOff) return;
+    unawaited(HapticFeedback.heavyImpact());
+    if (isFull) _playConfetti(context);
   }
 }
 

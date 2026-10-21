@@ -15,6 +15,7 @@ import '../widgets/read_crowns.dart';
 import '../widgets/sign_in_sheet.dart';
 import '../widgets/legacy_circles_prompt.dart';
 import '../widgets/offline_banner.dart';
+import '../widgets/update_banner.dart';
 import 'channel_editor_screen.dart';
 import 'circle_quote_list_screen.dart';
 import 'quote_editor_screen.dart';
@@ -102,9 +103,9 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _loadDiscover();
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) maybeShowLegacyCirclesPrompt(context);
-      });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) maybeShowLegacyCirclesPrompt(context);
+    });
   }
 
   @override
@@ -280,6 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
               // The logo and theme switch always stay in view.
               _buildHeader(state, isDark, c),
               const OfflineBanner(),
+              const UpdateBanner(),
               Expanded(
                 child: CustomScrollView(
                   keyboardDismissBehavior:
@@ -447,8 +449,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.local_fire_department,
-                                size: 50, color: accent),
+                            ChangeBounce(
+                              value: streak,
+                              child: Icon(Icons.local_fire_department,
+                                  size: 50, color: accent),
+                            ),
                             Text('Best: $best',
                                 style:
                                     TextStyle(fontSize: 11, color: c.blue)),
@@ -475,8 +480,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                PulseOnce(
-                  trigger: state.tokens,
+                ChangeBounce(
+                  value: state.tokens,
                   child: _SavesBadge(tokens: state.tokens),
                 ),
               ],
@@ -1696,9 +1701,9 @@ class _DecreeHitRow extends StatelessWidget {
     final c = AppColors.of(context);
     return InkWell(
       onTap: () => Navigator.of(context).push(
-      FxPageRoute(
-        builder: (_) => QuoteViewScreen(quoteId: hit.quote.id),
-      ),
+        FxPageRoute(
+          builder: (_) => QuoteViewScreen(quoteId: hit.quote.id),
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),

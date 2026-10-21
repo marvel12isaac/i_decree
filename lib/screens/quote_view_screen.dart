@@ -64,9 +64,35 @@ class QuoteViewScreen extends StatefulWidget {
 class _QuoteViewScreenState extends State<QuoteViewScreen> {
   static const Duration _unlockDelay = Duration(seconds: 5);
 
-  /// How long the "Decreed" panel stays up before the screen closes
-  /// (shorter in Reduced mode, skipped in Off mode).
-  static const Duration _decreedPanelTime = Duration(milliseconds: 700);
+  /// How long the "Decreed" panel stays up before the screen closes. Reading
+  /// time does not shrink with the effects level, and tapping the panel
+  /// closes it sooner. (In Off mode there is no panel: a toast is shown.)
+  static const Duration _decreedPanelTime = Duration(milliseconds: 1600);
+
+  /// A panel with a milestone message stays long enough to read it: about
+  /// reading speed, between 3 and 5.5 seconds.
+  Duration _panelTimeFor(String? message) {
+    if (message == null) return _decreedPanelTime;
+    final ms = (2000 + message.length * 45).clamp(3000, 5500).toInt();
+    return Duration(milliseconds: ms);
+  }
+
+  Completer<void>? _panelWait;
+  Timer? _panelTimer;
+
+  /// Waits [time], or until the panel is tapped.
+  Future<void> _waitOnPanel(Duration time) {
+    final wait = Completer<void>();
+    _panelWait = wait;
+    _panelTimer = Timer(time, _endPanelWait);
+    return wait.future;
+  }
+
+  void _endPanelWait() {
+    _panelTimer?.cancel();
+    final wait = _panelWait;
+    if (wait != null && !wait.isCompleted) wait.complete();
+  }
 
   final ScrollController _scroll = ScrollController();
   Timer? _delayTimer;
@@ -77,6 +103,9 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
   /// Set right after a read completes: today's read count, shown in the
   /// "Decreed" panel in place of the hold button.
   int? _decreedCount;
+
+  /// The milestone message to show with the panel (null = none).
+  String? _decreedMessage;
 
   // The user's role in this decree's channel (for managers' edit options).
   // Null until known; the channel icons stay hidden until then so they
@@ -117,6 +146,7 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
   @override
   void dispose() {
     _delayTimer?.cancel();
+    _endPanelWait();
     _scroll.dispose();
     super.dispose();
   }
@@ -204,18 +234,29 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     if (quote == null) return;
     await state.registerRead(quote.id);
     if (!mounted) return;
-    // Milestone check (streak of 7, 30, 100, or the very first read).
-    Fx.afterRead(context, state);
+    // Milestone check (streak of 7, 30, 100, or the very first read). Plays
+    // the confetti and returns the message to show with it, if any.
+    final message = Fx.afterRead(context, state);
     final today = state.readsTodayFor(quote.id);
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      SnackBar(
-          content: Text('Decreed. $today of ${quote.targetPerDay} today.')),
-    );
-    if (!Fx.isOff) {
-      // Show the "Decreed" panel with the new crown popping in, then close.
-      setState(() => _decreedCount = today);
-      await Future<void>.delayed(Fx.dur(_decreedPanelTime));
+    if (Fx.isOff) {
+      // No panel in Off mode, so the toast is the confirmation (and carries
+      // the milestone message, if there is one).
+      final extra = message == null ? '' : ' $message';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'Decreed. $today of ${quote.targetPerDay} today.$extra'),
+        ),
+      );
+    } else {
+      // The panel is the confirmation (a toast on top would cover it): show
+      // "Decreed" with the new crown popping in, plus the milestone message
+      // when there is one, then close.
+      setState(() {
+        _decreedCount = today;
+        _decreedMessage = message;
+      });
+      await _waitOnPanel(_panelTimeFor(message));
       if (!mounted) return; // the user already left
     }
     if (Navigator.of(context).canPop()) Navigator.of(context).pop();
@@ -380,43 +421,83 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
     );
   }
 
-  /// Replaces the hold button for a moment after a read: "Decreed" plus
-  /// today's crowns, with the crown just earned popping in. Same height as
-  /// the button so nothing jumps.
-  Widget _buildDecreedPanel(BuildContext context, Quote quote, int today) {
+  /// Replaces the hold button after a read: "Decreed" plus today's crowns,
+  /// with the crown just earned popping in. When a milestone was reached its
+  /// message sits underneath (the panel grows to fit it). Tapping it closes
+  /// the screen sooner.
+  Widget _buildDecreedPanel(
+    BuildContext context,
+    Quote quote,
+    int today,
+    String? message,
+  ) {
     final c = AppColors.of(context);
     final target = quote.targetPerDay;
     final popIndex = (today >= 1 && today <= target) ? today - 1 : null;
-    return Container(
-      height: 60,
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: BoxDecoration(
-        color: c.teal.withAlpha(31),
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.check_circle_outline, size: 20, color: c.teal),
-          const SizedBox(width: 8),
-          Text(
-            'Decreed',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: c.teal,
-            ),
+    final row = Row(
+      children: [
+        Icon(Icons.check_circle_outline, size: 20, color: c.teal),
+        const SizedBox(width: 8),
+        Text(
+          'Decreed',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: c.teal,
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: ReadCrowns(
-              done: today,
-              target: target,
-              size: 20,
-              popIndex: popIndex,
-            ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ReadCrowns(
+            done: today,
+            target: target,
+            size: 20,
+            popIndex: popIndex,
           ),
-        ],
+        ),
+      ],
+    );
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _endPanelWait,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 60),
+        width: double.infinity,
+        alignment: Alignment.center,
+        padding: EdgeInsets.symmetric(
+          horizontal: 24,
+          vertical: message == null ? 0 : 14,
+        ),
+        decoration: BoxDecoration(
+          color: c.teal.withAlpha(31),
+          borderRadius: BorderRadius.circular(message == null ? 30 : 24),
+        ),
+        child: message == null
+            ? row
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  row,
+                  const SizedBox(height: 10),
+                  Text(
+                    message,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: c.teal,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Tap to continue',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: c.teal.withAlpha(170),
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }
@@ -514,9 +595,12 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // The decree text fades in and rises slightly, once per
-                    // time the screen opens.
+                    // The decree text fades in and rises slightly once the page
+                    // has finished sliding in, so the two don't overlap.
                     FadeSlideIn(
+                      afterRoute: true,
+                      offset: 18,
+                      duration: const Duration(milliseconds: 650),
                       child: QuoteTitleBody(
                           text: quote.text, size: 24, compact: false),
                     ),
@@ -547,7 +631,8 @@ class _QuoteViewScreenState extends State<QuoteViewScreen> {
               child: _previewMode
                   ? _buildJoinActions(context)
                   : decreedCount != null
-                      ? _buildDecreedPanel(context, quote, decreedCount)
+                      ? _buildDecreedPanel(
+                          context, quote, decreedCount, _decreedMessage)
                       : HoldToReadButton(
                           unlocked: unlocked,
                           lockedLabel: lockedLabel,

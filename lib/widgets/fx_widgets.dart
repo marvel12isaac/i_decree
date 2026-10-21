@@ -3,17 +3,62 @@
 // Full / Reduced / Off setting and the phone's animation setting apply
 // everywhere without each screen having to care.
 
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 
 import '../fx.dart';
+import '../theme.dart';
 
 // ---------------------------------------------------------------- count up
 
+/// Lets a widget wait until its screen is actually in view before playing an
+/// effect. Home sits underneath the decree screen after a read, so a change
+/// to the streak or saves happens while Home is covered. Without this the
+/// effect plays out of sight. [runWhenShown] runs the action now if the screen
+/// is showing, otherwise right after it comes back into view (once the screen
+/// on top has slid away).
+mixin _WhenShown<T extends StatefulWidget> on State<T> {
+  VoidCallback? _pendingAction;
+  Timer? _shownTimer;
+
+  bool get _screenShown => ModalRoute.of(context)?.isCurrent ?? true;
+
+  void runWhenShown(VoidCallback action) {
+    if (_screenShown) {
+      _pendingAction = null;
+      action();
+    } else {
+      _pendingAction = action;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final action = _pendingAction;
+    if (action == null || !_screenShown) return;
+    _pendingAction = null;
+    _shownTimer?.cancel();
+    // Wait for the page that was on top to finish sliding away.
+    _shownTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (mounted) action();
+    });
+  }
+
+  @override
+  void dispose() {
+    _shownTimer?.cancel();
+    super.dispose();
+  }
+}
+
 /// A number that counts to its new value when it CHANGES. The first time it
-/// appears it just shows the value (no count-from-zero on every screen visit).
-class CountUp extends StatelessWidget {
+/// appears it just shows the value (no count-from-zero on every screen
+/// visit). If the change happens while the screen is covered, the count
+/// waits until the screen is back in view.
+class CountUp extends StatefulWidget {
   const CountUp({
     super.key,
     required this.value,
@@ -26,12 +71,128 @@ class CountUp extends StatelessWidget {
   final String suffix;
 
   @override
+  State<CountUp> createState() => _CountUpState();
+}
+
+class _CountUpState extends State<CountUp>
+    with SingleTickerProviderStateMixin, _WhenShown<CountUp> {
+  late final AnimationController _controller;
+  late int _from;
+  late int _to;
+
+  @override
+  void initState() {
+    super.initState();
+    _from = _to = widget.value;
+    _controller = AnimationController(vsync: this);
+  }
+
+  @override
+  void didUpdateWidget(CountUp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final target = widget.value;
+    if (target == oldWidget.value) return;
+    runWhenShown(() {
+      final duration = Fx.dur(const Duration(milliseconds: 700));
+      if (duration == Duration.zero) {
+        setState(() => _from = _to = target);
+        return;
+      }
+      _from = _shownValue();
+      _to = target;
+      _controller.duration = duration;
+      _controller.forward(from: 0);
+    });
+  }
+
+  int _shownValue() {
+    final t = Curves.easeOutCubic.transform(_controller.value);
+    return (_from + (_to - _from) * t).round();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(end: value.toDouble()),
-      duration: Fx.dur(Fx.standard),
-      curve: Fx.easeOut,
-      builder: (context, v, _) => Text('${v.round()}$suffix', style: style),
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) =>
+          Text('${_shownValue()}${widget.suffix}', style: widget.style),
+    );
+  }
+}
+
+// ------------------------------------------------------------ change bounce
+
+/// Plays a short effect on its child when [value] changes: a springy pop
+/// when it goes UP (a streak grows, a save is added) and a quick shake when
+/// it goes DOWN (a streak breaks, a save is used). Full mode only. If the
+/// change happens while the screen is covered, it plays once the screen is
+/// back in view. Use it on the streak flame and the saves shield.
+class ChangeBounce extends StatefulWidget {
+  const ChangeBounce({super.key, required this.value, required this.child});
+
+  final int value;
+  final Widget child;
+
+  @override
+  State<ChangeBounce> createState() => _ChangeBounceState();
+}
+
+class _ChangeBounceState extends State<ChangeBounce>
+    with SingleTickerProviderStateMixin, _WhenShown<ChangeBounce> {
+  late final AnimationController _controller =
+      AnimationController(vsync: this, duration: Fx.celebrate);
+  late final Animation<double> _scale = TweenSequence<double>([
+    TweenSequenceItem(
+      tween: Tween<double>(begin: 1, end: 1.4)
+          .chain(CurveTween(curve: Curves.easeOut)),
+      weight: 30,
+    ),
+    TweenSequenceItem(
+      tween: Tween<double>(begin: 1.4, end: 1)
+          .chain(CurveTween(curve: Curves.elasticOut)),
+      weight: 70,
+    ),
+  ]).animate(_controller);
+
+  bool _gain = true;
+
+  @override
+  void didUpdateWidget(ChangeBounce oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.value == oldWidget.value || !Fx.isFull) return;
+    final gain = widget.value > oldWidget.value;
+    runWhenShown(() {
+      _gain = gain;
+      _controller.duration = const Duration(milliseconds: 900);
+      _controller.forward(from: 0);
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      child: widget.child,
+      builder: (context, child) {
+        if (_gain) {
+          return Transform.scale(scale: _scale.value, child: child);
+        }
+        final t = _controller.value;
+        final dx = sin(t * pi * 7) * (1 - t) * 9;
+        return Transform.translate(offset: Offset(dx, 0), child: child);
+      },
     );
   }
 }
@@ -72,6 +233,12 @@ class PopIn extends StatelessWidget {
 /// the decree text reveal and for first-load list entry (pass
 /// `animate: Fx.firstTime('home_list')`). [index] adds a small stagger in
 /// Full mode only (capped, so long lists don't wait).
+///
+/// [afterRoute]: wait for the page transition this widget sits in to finish
+/// before starting. Without it the reveal runs at the same time as the
+/// page's own fade and is invisible. If the page is already fully shown
+/// (for example the first screen after a notification launch) it starts
+/// straight away.
 class FadeSlideIn extends StatefulWidget {
   const FadeSlideIn({
     super.key,
@@ -79,12 +246,18 @@ class FadeSlideIn extends StatefulWidget {
     this.animate = true,
     this.index = 0,
     this.offset = 12,
+    this.duration,
+    this.afterRoute = false,
   });
 
   final Widget child;
   final bool animate;
   final int index;
   final double offset;
+
+  /// Length of the fade. Defaults to [Fx.standard].
+  final Duration? duration;
+  final bool afterRoute;
 
   @override
   State<FadeSlideIn> createState() => _FadeSlideInState();
@@ -94,6 +267,8 @@ class _FadeSlideInState extends State<FadeSlideIn>
     with SingleTickerProviderStateMixin {
   AnimationController? _controller;
   Animation<double>? _t;
+  Animation<double>? _routeAnimation;
+  AnimationStatusListener? _routeListener;
   bool _started = false;
 
   @override
@@ -103,7 +278,8 @@ class _FadeSlideInState extends State<FadeSlideIn>
     _started = true;
     if (!widget.animate || Fx.isOff) return;
     final staggerMs = Fx.isFull ? widget.index.clamp(0, 6) * 40 : 0;
-    final total = Fx.dur(Fx.standard) + Duration(milliseconds: staggerMs);
+    final total = Fx.dur(widget.duration ?? Fx.standard) +
+        Duration(milliseconds: staggerMs);
     if (total.inMilliseconds <= 0) return;
     final controller = AnimationController(vsync: this, duration: total);
     _controller = controller;
@@ -115,11 +291,30 @@ class _FadeSlideInState extends State<FadeSlideIn>
         curve: Fx.easeOut,
       ),
     );
-    controller.forward();
+
+    final routeAnimation =
+        widget.afterRoute ? ModalRoute.of(context)?.animation : null;
+    if (routeAnimation != null &&
+        routeAnimation.status != AnimationStatus.completed) {
+      void listener(AnimationStatus status) {
+        if (status != AnimationStatus.completed) return;
+        routeAnimation.removeStatusListener(listener);
+        _routeListener = null;
+        if (mounted) controller.forward();
+      }
+
+      _routeAnimation = routeAnimation;
+      _routeListener = listener;
+      routeAnimation.addStatusListener(listener);
+    } else {
+      controller.forward();
+    }
   }
 
   @override
   void dispose() {
+    final listener = _routeListener;
+    if (listener != null) _routeAnimation?.removeStatusListener(listener);
     _controller?.dispose();
     super.dispose();
   }
@@ -351,13 +546,13 @@ class _ConfettiPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final p = t.value;
-    final secs = p * (Fx.celebrate.inMilliseconds / 1000);
+    final secs = p * 2.0;
     final origin = Offset(size.width / 2, size.height * 0.38);
     final fade = p < 0.7 ? 1.0 : (1 - (p - 0.7) / 0.3).clamp(0.0, 1.0);
     final paint = Paint();
     for (final c in pieces) {
       final dx = cos(c.angle) * c.speed * secs;
-      final dy = sin(c.angle) * c.speed * secs + 0.5 * 900 * secs * secs;
+      final dy = sin(c.angle) * c.speed * secs + 0.5 * 700 * secs * secs;
       paint.color = c.color.withAlpha((255 * fade).round());
       canvas.save();
       canvas.translate(origin.dx + dx, origin.dy + dy);
@@ -381,20 +576,38 @@ class _ConfettiPainter extends CustomPainter {
 // --------------------------------------------------------- settings picker
 
 /// The "Effects" choice for the Settings page: Automatic / Full / Reduced /
-/// Off. Drop it into the Settings screen as-is.
+/// Off, each with an icon, and the selected one highlighted. Drop it into
+/// the Settings screen as-is.
 class EffectsPicker extends StatelessWidget {
   const EffectsPicker({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return ValueListenableBuilder<FxLevel?>(
       valueListenable: Fx.choice,
       builder: (context, choice, _) {
-        Widget option(String title, String subtitle, FxLevel? value) {
+        Widget option(
+          IconData icon,
+          String title,
+          String subtitle,
+          FxLevel? value,
+        ) {
+          final selected = choice == value;
           return ListTile(
-            title: Text(title),
+            selected: selected,
+            selectedColor: c.teal,
+            selectedTileColor: c.teal.withAlpha(36),
+            iconColor: c.muted,
+            leading: Icon(icon),
+            title: Text(
+              title,
+              style: TextStyle(
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+              ),
+            ),
             subtitle: Text(subtitle),
-            trailing: choice == value ? const Icon(Icons.check) : null,
+            trailing: selected ? const Icon(Icons.check) : null,
             onTap: () => Fx.setChoice(value),
           );
         }
@@ -403,16 +616,25 @@ class EffectsPicker extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Text('Effects'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+              child: Text(
+                'Effects',
+                style: TextStyle(
+                  color: c.text,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
-            option('Automatic', 'Follows your phone\u2019s animation setting',
-                null),
-            option('Full', 'All animations and celebrations', FxLevel.full),
-            option('Reduced', 'Shorter animations, no celebrations',
-                FxLevel.reduced),
-            option('Off', 'No animations or vibration', FxLevel.off),
+            option(Icons.phone_android, 'Automatic',
+                'Follows your phone\u2019s animation setting', null),
+            option(Icons.auto_awesome, 'Full',
+                'All animations and celebrations', FxLevel.full),
+            option(Icons.tune, 'Reduced',
+                'Shorter animations, no celebrations', FxLevel.reduced),
+            option(Icons.block, 'Off', 'No animations or vibration',
+                FxLevel.off),
           ],
         );
       },
