@@ -1,7 +1,7 @@
 name: i_decree
 description: Job 22:28 NKJV You will also declare a thing, And it will be established for you; So light will shine on your ways.
 publish_to: 'none'
-version: 0.1.0+1
+version: 1.2.0+2
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
