@@ -171,11 +171,11 @@ class _IDecreeAppState extends State<IDecreeApp>
   /// Handles a notification tap: "take me to this decree".
   ///
   /// - If that decree's page is already open, anywhere in the stack, close
-  ///   everything above it and show it (its state is kept).
-  /// - Otherwise close everything above Home (open editors, lists, dialogs;
-  ///   any unsaved edit is discarded) and show a fresh decree page.
-  ///
-  /// Either way there is never a second page for the same decree.
+  ///   everything above it (an editor, a list, a dialog; any unsaved edit is
+  ///   discarded) and show it. Its state is kept, and there is never a second
+  ///   page for the same decree.
+  /// - Otherwise open the decree on top of whatever is showing. So a tap for
+  ///   decree B while decree A is open puts B on top of A.
   void _openQuote(String quoteId) {
     if (widget.state.quoteById(quoteId) == null) return;
     final navigator = _navigatorKey.currentState;
@@ -200,9 +200,8 @@ class _IDecreeAppState extends State<IDecreeApp>
       navigator.popUntil((route) => identical(route, existing));
       return;
     }
-    navigator.pushAndRemoveUntil(
+    navigator.push(
       FxPageRoute<void>(builder: (_) => QuoteViewScreen(quoteId: quoteId)),
-      (route) => route.isFirst,
     );
   }
 
